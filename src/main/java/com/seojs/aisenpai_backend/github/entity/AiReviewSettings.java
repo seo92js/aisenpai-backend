@@ -117,7 +117,8 @@ public class AiReviewSettings {
 
             if (!activeRules.isEmpty()) {
                 sb.append("### 코드 리뷰 규칙\n");
-                sb.append("다음 규칙들을 엄격하게 준수하여 리뷰해 주세요:\n");
+                sb.append("아래 규칙들은 해당 Target 패턴에 매칭되는 파일의 **변경된 코드**에만 적용하세요.\n");
+                sb.append("규칙 위반이 실제로 발생한 경우에만 코멘트를 작성하고, 위반이 없으면 해당 규칙에 대한 코멘트를 달지 마세요.\n");
                 activeRules.forEach(rule -> sb.append(rule).append("\n"));
                 sb.append("\n");
             }
