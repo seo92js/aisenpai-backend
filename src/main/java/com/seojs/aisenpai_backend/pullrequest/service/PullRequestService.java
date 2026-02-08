@@ -359,7 +359,7 @@ public class PullRequestService {
         String title = webhookPayload.getPullRequest().getTitle();
 
         PullRequest existingPr = pullRequestRepository
-                .findByRepositoryIdAndPrNumber(repoId, prNumber)
+                .findWithLockByRepositoryIdAndPrNumber(repoId, prNumber)
                 .orElse(null);
 
         if (existingPr != null) {
