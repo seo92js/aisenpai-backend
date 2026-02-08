@@ -117,10 +117,16 @@ public class AiReviewSettings {
 
             if (!activeRules.isEmpty()) {
                 sb.append("### 코드 리뷰 규칙\n");
-                sb.append("아래 규칙들은 해당 Target 패턴에 매칭되는 파일의 **변경된 코드**에만 적용하세요.\n");
-                sb.append("규칙 위반이 실제로 발생한 경우에만 코멘트를 작성하고, 위반이 없으면 해당 규칙에 대한 코멘트를 달지 마세요.\n");
+                sb.append("중요: 규칙 적용 시 반드시 아래 체크리스트를 따르세요:\n");
+                sb.append("1. 해당 규칙의 Target 패턴이 변경된 파일과 매칭되는가?\n");
+                sb.append("2. 변경된 코드(diff의 + 라인)에서 실제로 규칙 위반이 발견되었는가?\n");
+                sb.append("3. 위 두 조건이 모두 YES일 때만 해당 규칙에 대한 코멘트를 작성하세요.\n");
+                sb.append("4. 조건을 충족하지 않으면 규칙 관련 코멘트를 작성하지 마세요.\n\n");
                 activeRules.forEach(rule -> sb.append(rule).append("\n"));
                 sb.append("\n");
+                sb.append("### 잘못된 리뷰 예시 (이렇게 하지 마세요)\n");
+                sb.append("- Target 파일이지만 규칙 위반 코드가 없는데 '주의하세요' 류의 코멘트\n");
+                sb.append("- 변경되지 않은 기존 코드에 대한 규칙 적용\n\n");
             }
         }
 
