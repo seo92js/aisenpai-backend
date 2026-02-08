@@ -11,6 +11,8 @@ import java.time.LocalDateTime;
 @Entity
 @Getter
 @NoArgsConstructor
+@Table(uniqueConstraints = @UniqueConstraint(name = "uk_pullrequest_repo_pr", columnNames = { "repository_id",
+        "pr_number" }))
 public class PullRequest {
 
     @Id

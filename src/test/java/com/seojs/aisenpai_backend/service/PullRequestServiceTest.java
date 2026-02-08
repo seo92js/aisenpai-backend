@@ -158,7 +158,7 @@ class PullRequestServiceTest {
         when(dto.getPullRequest()).thenReturn(prDto);
 
         when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
-        when(pullRequestRepository.findByRepositoryIdAndPrNumber(repoId, prNumber))
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.empty());
 
         GithubAccount account = GithubAccount.builder().loginId(ownerLogin).build();
