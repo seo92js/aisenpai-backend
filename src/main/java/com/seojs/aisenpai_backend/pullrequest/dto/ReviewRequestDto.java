@@ -17,4 +17,15 @@ public class ReviewRequestDto {
     private String model;
     private String systemPrompt;
     private String encryptedOpenAiKey;
+    private String repositoryTree;
+
+    public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
+            String systemPrompt, String encryptedOpenAiKey) {
+        this.repositoryId = repositoryId;
+        this.prNumber = prNumber;
+        this.changedFiles = changedFiles;
+        this.model = model;
+        this.systemPrompt = systemPrompt;
+        this.encryptedOpenAiKey = encryptedOpenAiKey;
+    }
 }

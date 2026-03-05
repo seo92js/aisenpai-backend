@@ -15,7 +15,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @RequiredArgsConstructor
 @Component
@@ -39,7 +41,13 @@ public class PullRequestReviewListener {
         String openApiKey = tokenEncryptionService.decryptToken(encryptedKey);
 
         try {
-            String userPrompt = objectMapper.writeValueAsString(changedFiles);
+            Map<String, Object> aiPayload = new HashMap<>();
+            aiPayload.put("changedFiles", changedFiles);
+            if (dto.getRepositoryTree() != null) {
+                aiPayload.put("repositoryTree", dto.getRepositoryTree());
+            }
+
+            String userPrompt = objectMapper.writeValueAsString(aiPayload);
             String review = aiService.callAiChat(openApiKey, systemPrompt, userPrompt, model, null);
             pullRequestService.updateAiReview(repositoryId, prNumber, review, ReviewStatus.COMPLETED);
         } catch (JsonProcessingException e) {

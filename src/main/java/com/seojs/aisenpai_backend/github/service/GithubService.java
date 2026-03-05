@@ -278,6 +278,25 @@ public class GithubService {
     }
 
     /**
+     * PR의 상세 정보(base, head branch SHA 포함)를 조회
+     */
+    public PullRequestInfoDto getPullRequestInfo(String accessToken, String owner, String repo, int prNumber) {
+        try {
+            return webClientBuilder.build()
+                    .get()
+                    .uri("https://api.github.com/repos/{owner}/{repo}/pulls/{prNumber}", owner, repo, prNumber)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .retrieve()
+                    .bodyToMono(PullRequestInfoDto.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to fetch PR info for {}/{} PR #{}", owner, repo, prNumber, e);
+            throw new GitHubApiEx("Failed to get PR info", e);
+        }
+    }
+
+    /**
      * Github PR에 댓글 게시
      */
     public void postPRComment(String accessToken, String owner, String repo, int prNumber, String body) {
@@ -300,6 +319,32 @@ public class GithubService {
         } catch (Exception e) {
             log.error("Failed to post comment to PR #{} in {}/{}: {}", prNumber, owner, repo, e.getMessage());
             throw new GitHubApiEx("Failed to post PR comment", e);
+        }
+    }
+
+    /**
+     * 특정 브랜치(또는 커밋 SHA)의 파일 트리 구조(목록)를 가져옵니다.
+     * recursive=true 전달 시 하위 디렉토리 트리를 한 번에 다 가져옵니다. (단일 API 호출)
+     */
+    public GitTreeResponseDto getRepositoryTree(String accessToken, String owner, String repo, String treeSha,
+            boolean recursive) {
+        try {
+            String uri = "https://api.github.com/repos/{owner}/{repo}/git/trees/{treeSha}";
+            if (recursive) {
+                uri += "?recursive=1";
+            }
+
+            return webClientBuilder.build()
+                    .get()
+                    .uri(uri, owner, repo, treeSha)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .retrieve()
+                    .bodyToMono(GitTreeResponseDto.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to fetch repository tree for {}/{} at {}: {}", owner, repo, treeSha, e.getMessage());
+            throw new GitHubApiEx("Failed to fetch repository tree", e);
         }
     }
 
