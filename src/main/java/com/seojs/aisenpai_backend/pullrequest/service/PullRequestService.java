@@ -7,7 +7,9 @@ import com.seojs.aisenpai_backend.exception.WebhookProcessingEx;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.dto.GitTreeResponseDto;
 import com.seojs.aisenpai_backend.github.dto.GithubReviewRequestDto;
+import com.seojs.aisenpai_backend.github.dto.PullRequestInfoDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
@@ -144,8 +146,35 @@ public class PullRequestService {
         // LLM 호출은 이벤트 리스너에서 수행
         String systemPrompt = githubAccount.getAiSettings().buildSystemPrompt();
         String encryptedOpenAiKey = githubAccount.getAiSettings().getOpenAiKey();
+
+        // 트리 구조 가져오기
+        String repositoryTreeString = null;
+        try {
+            PullRequestInfoDto prInfo = githubService.getPullRequestInfo(accessToken, owner, repo, prNumber);
+            String targetTreeSha = "HEAD";
+            if (prInfo != null && prInfo.getBase() != null && prInfo.getBase().getSha() != null) {
+                targetTreeSha = prInfo.getBase().getSha();
+                log.info("Found base branch SHA for PR #{}: {}", prNumber, targetTreeSha);
+            }
+
+            GitTreeResponseDto treeDto = githubService.getRepositoryTree(accessToken, owner, repo, targetTreeSha, true);
+            if (treeDto != null && treeDto.getTree() != null) {
+                StringBuilder sb = new StringBuilder();
+                for (GitTreeResponseDto.GitTreeItemDto item : treeDto.getTree()) {
+                    sb.append("- ").append(item.getType()).append(": ").append(item.getPath()).append("\n");
+                }
+                repositoryTreeString = sb.toString();
+                log.info("Successfully fetched repository tree context for PR #{}", prNumber);
+            }
+        } catch (Exception e) {
+            log.warn(
+                    "Failed to fetch repository tree context for PR #{}. Proceeding without structural context. Error: {}",
+                    prNumber, e.getMessage());
+        }
+
         eventPublisher.publishEvent(
-                new ReviewRequestDto(repositoryId, prNumber, filteredFiles, model, systemPrompt, encryptedOpenAiKey));
+                new ReviewRequestDto(repositoryId, prNumber, filteredFiles, model, systemPrompt, encryptedOpenAiKey,
+                        repositoryTreeString));
     }
 
     /**
