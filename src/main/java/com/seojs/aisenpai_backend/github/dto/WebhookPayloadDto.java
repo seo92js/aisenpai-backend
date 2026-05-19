@@ -3,41 +3,62 @@ package com.seojs.aisenpai_backend.github.dto;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 @Getter
 @AllArgsConstructor
+@NoArgsConstructor
 public class WebhookPayloadDto {
-    private final String action;
+    private String action;
     @JsonProperty("pull_request")
-    private final PullRequestDto pullRequest;
-    private final RepositoryDto repository;
+    private PullRequestDto pullRequest;
+    private RepositoryDto repository;
 
     @Getter
     @AllArgsConstructor
+    @NoArgsConstructor
     public static class PullRequestDto {
-        private final int number;
-        private final String title;
-        private final String body;
-        private final String state;
-        private final UserDto user;
-        private final String htmlUrl;
-        private final String diffUrl;
+        private int number;
+        private String title;
+        private String body;
+        private String state;
+        private UserDto user;
+        private String htmlUrl;
+        private String diffUrl;
+        private RefDto head;
+        private RefDto base;
+        private Boolean merged;
+
+        public PullRequestDto(int number, String title, String body, String state, UserDto user, String htmlUrl,
+                String diffUrl) {
+            this(number, title, body, state, user, htmlUrl, diffUrl, null, null, null);
+        }
     }
 
     @Getter
     @AllArgsConstructor
+    @NoArgsConstructor
+    public static class RefDto {
+        private String ref;
+        private String sha;
+    }
+
+    @Getter
+    @AllArgsConstructor
+    @NoArgsConstructor
     public static class RepositoryDto {
-        private final Long id;
-        private final String name;
-        private final String fullName;
-        private final UserDto owner;
+        private Long id;
+        private String name;
+        private String fullName;
+        private UserDto owner;
     }
 
     @Getter
     @AllArgsConstructor
+    @NoArgsConstructor
     public static class UserDto {
-        private final String login;
-        private final int id;
-        private final String htmlUrl;
+        private String login;
+        private int id;
+        private String htmlUrl;
     }
 }
