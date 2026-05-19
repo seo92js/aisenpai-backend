@@ -22,6 +22,7 @@ import com.seojs.aisenpai_backend.notification.service.NotificationService;
 import com.seojs.aisenpai_backend.pullrequest.dto.PullRequestResponseDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest;
+import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.PullRequestState;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.ReviewStatus;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
 import lombok.RequiredArgsConstructor;
@@ -109,13 +110,31 @@ public class PullRequestService {
                         + repositoryId + ", prNumber: " + prNumber));
     }
 
+    private PullRequest findWithLockByRepositoryIdAndPrNumberOrThrow(Long repositoryId, Integer prNumber) {
+        return pullRequestRepository
+                .findWithLockByRepositoryIdAndPrNumber(repositoryId, prNumber)
+                .orElseThrow(() -> new PullRequestNotFoundEx("Pull request not found for repositoryId: "
+                        + repositoryId + ", prNumber: " + prNumber));
+    }
+
     /**
      * ai 리뷰 시작
      */
     @Transactional
     public void review(String owner, String repo, Integer prNumber, String accessToken, String model) {
         Long repositoryId = githubService.getRepositoryId(accessToken, owner, repo);
-        PullRequest pr = findByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
+        PullRequest pr = findWithLockByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
+
+        PullRequestInfoDto prInfo = githubService.getPullRequestInfo(accessToken, owner, repo, prNumber);
+        String currentHeadSha = extractHeadSha(prInfo, pr.getHeadSha());
+        String currentBaseSha = extractBaseSha(prInfo, pr.getBaseSha());
+        pr.updatePullRequestSnapshot(pr.getAction(), resolvePrState(prInfo, pr.getPrState()), currentHeadSha,
+                currentBaseSha);
+
+        if (pr.getStatus() == ReviewStatus.IN_PROGRESS && pr.isReviewForCurrentHead(currentHeadSha)) {
+            log.info("Skipping duplicate review request for PR #{} at head {}", prNumber, currentHeadSha);
+            return;
+        }
 
         List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken, owner, repo, prNumber);
 
@@ -141,7 +160,7 @@ public class PullRequestService {
                     .toList();
         }
 
-        pr.updateStatus(ReviewStatus.IN_PROGRESS);
+        pr.markReviewStarted(currentHeadSha);
 
         // LLM 호출은 이벤트 리스너에서 수행
         String systemPrompt = githubAccount.getAiSettings().buildSystemPrompt();
@@ -150,7 +169,6 @@ public class PullRequestService {
         // 트리 구조 가져오기
         String repositoryTreeString = null;
         try {
-            PullRequestInfoDto prInfo = githubService.getPullRequestInfo(accessToken, owner, repo, prNumber);
             String targetTreeSha = "HEAD";
             if (prInfo != null && prInfo.getBase() != null && prInfo.getBase().getSha() != null) {
                 targetTreeSha = prInfo.getBase().getSha();
@@ -174,7 +192,7 @@ public class PullRequestService {
 
         eventPublisher.publishEvent(
                 new ReviewRequestDto(repositoryId, prNumber, filteredFiles, model, systemPrompt, encryptedOpenAiKey,
-                        repositoryTreeString));
+                        repositoryTreeString, currentHeadSha));
     }
 
     /**
@@ -183,9 +201,35 @@ public class PullRequestService {
     @Transactional
     public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
             ReviewStatus status) {
-        PullRequest pr = findByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
-        pr.updateAiReview(aiReview);
-        pr.updateStatus(status);
+        updateAiReview(repositoryId, prNumber, aiReview, status, null);
+    }
+
+    @Transactional
+    public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
+            ReviewStatus status, String reviewStartedHeadSha) {
+        PullRequest pr = findWithLockByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
+
+        if (reviewStartedHeadSha != null && !pr.isReviewForCurrentHead(reviewStartedHeadSha)) {
+            if (pr.getReviewStartedHeadSha() != null && !reviewStartedHeadSha.equals(pr.getReviewStartedHeadSha())) {
+                log.info("Ignoring stale review completion for PR #{} because a newer review is in progress. "
+                        + "completedHead={}, activeReviewHead={}, currentHead={}", prNumber, reviewStartedHeadSha,
+                        pr.getReviewStartedHeadSha(), pr.getHeadSha());
+                return;
+            }
+            pr.markReviewStale(aiReview);
+            log.info("Marked stale review for PR #{}. reviewedHead={}, currentHead={}", prNumber,
+                    reviewStartedHeadSha, pr.getHeadSha());
+            return;
+        }
+
+        if (status == ReviewStatus.COMPLETED) {
+            pr.markReviewCompleted(aiReview, reviewStartedHeadSha);
+        } else if (status == ReviewStatus.FAILED) {
+            pr.markReviewFailed(aiReview, reviewStartedHeadSha);
+        } else {
+            pr.updateAiReview(aiReview);
+            pr.updateStatus(status);
+        }
 
         GithubAccount account = pr.getGithubAccount();
 
@@ -376,6 +420,53 @@ public class PullRequestService {
         return List.of("opened", "synchronize", "reopened", "closed", "merged").contains(action);
     }
 
+    private PullRequestState resolvePrState(WebhookPayloadDto webhookPayload) {
+        String action = webhookPayload.getAction();
+        WebhookPayloadDto.PullRequestDto pullRequest = webhookPayload.getPullRequest();
+
+        if ("closed".equals(action)) {
+            return Boolean.TRUE.equals(pullRequest.getMerged()) ? PullRequestState.MERGED : PullRequestState.CLOSED;
+        }
+        if ("merged".equals(action)) {
+            return PullRequestState.MERGED;
+        }
+        if ("closed".equals(pullRequest.getState())) {
+            return Boolean.TRUE.equals(pullRequest.getMerged()) ? PullRequestState.MERGED : PullRequestState.CLOSED;
+        }
+        return PullRequestState.OPEN;
+    }
+
+    private String extractHeadSha(WebhookPayloadDto webhookPayload) {
+        WebhookPayloadDto.RefDto head = webhookPayload.getPullRequest().getHead();
+        return head != null ? head.getSha() : null;
+    }
+
+    private String extractBaseSha(WebhookPayloadDto webhookPayload) {
+        WebhookPayloadDto.RefDto base = webhookPayload.getPullRequest().getBase();
+        return base != null ? base.getSha() : null;
+    }
+
+    private String extractHeadSha(PullRequestInfoDto prInfo, String fallback) {
+        if (prInfo != null && prInfo.getHead() != null && prInfo.getHead().getSha() != null) {
+            return prInfo.getHead().getSha();
+        }
+        return fallback;
+    }
+
+    private String extractBaseSha(PullRequestInfoDto prInfo, String fallback) {
+        if (prInfo != null && prInfo.getBase() != null && prInfo.getBase().getSha() != null) {
+            return prInfo.getBase().getSha();
+        }
+        return fallback;
+    }
+
+    private PullRequestState resolvePrState(PullRequestInfoDto prInfo, PullRequestState fallback) {
+        if (prInfo == null || prInfo.getState() == null) {
+            return fallback != null ? fallback : PullRequestState.OPEN;
+        }
+        return "closed".equals(prInfo.getState()) ? PullRequestState.CLOSED : PullRequestState.OPEN;
+    }
+
     /**
      * PR 정보를 데이터베이스에 저장
      */
@@ -386,31 +477,40 @@ public class PullRequestService {
         Integer prNumber = webhookPayload.getPullRequest().getNumber();
         String action = webhookPayload.getAction();
         String title = webhookPayload.getPullRequest().getTitle();
+        PullRequestState prState = resolvePrState(webhookPayload);
+        String headSha = extractHeadSha(webhookPayload);
+        String baseSha = extractBaseSha(webhookPayload);
 
         PullRequest existingPr = pullRequestRepository
                 .findWithLockByRepositoryIdAndPrNumber(repoId, prNumber)
                 .orElse(null);
 
         if (existingPr != null) {
-            updateExistingPullRequest(existingPr, action);
+            updateExistingPullRequest(existingPr, action, prState, headSha, baseSha);
         } else {
-            createNewPullRequest(repoId, repoName, loginId, prNumber, action, title);
+            createNewPullRequest(repoId, repoName, loginId, prNumber, action, title, prState, headSha, baseSha);
         }
     }
 
     /**
      * 기존 PR 업데이트
      */
-    private void updateExistingPullRequest(PullRequest existingPr, String action) {
+    private void updateExistingPullRequest(PullRequest existingPr, String action, PullRequestState prState,
+            String headSha, String baseSha) {
         ReviewStatus currentStatus = existingPr.getStatus();
+        String nextHeadSha = headSha != null ? headSha : existingPr.getHeadSha();
+        String nextBaseSha = baseSha != null ? baseSha : existingPr.getBaseSha();
 
-        // COMPLETED, FAILED 상태에서 새 변경사항이 있으면 NEW_CHANGES로 변경
-        if (currentStatus == ReviewStatus.COMPLETED || currentStatus == ReviewStatus.FAILED) {
-            existingPr.updateStatus(ReviewStatus.NEW_CHANGES);
+        if (prState == PullRequestState.OPEN && "synchronize".equals(action)) {
+            if (currentStatus == ReviewStatus.IN_PROGRESS) {
+                existingPr.updateStatus(ReviewStatus.STALE);
+            } else if (currentStatus == ReviewStatus.COMPLETED || currentStatus == ReviewStatus.FAILED
+                    || currentStatus == ReviewStatus.STALE) {
+                existingPr.updateStatus(ReviewStatus.NEW_CHANGES);
+            }
         }
-        // PENDING, IN_PROGRESS, NEW_CHANGES는 상태 유지
 
-        existingPr.updateAction(action);
+        existingPr.updatePullRequestSnapshot(action, prState, nextHeadSha, nextBaseSha);
         pullRequestRepository.save(existingPr);
     }
 
@@ -452,7 +552,7 @@ public class PullRequestService {
      * 새 PR 생성
      */
     private void createNewPullRequest(Long repoId, String repoName, String loginId, Integer prNumber, String action,
-            String title) {
+            String title, PullRequestState prState, String headSha, String baseSha) {
         GithubAccount githubAccount = githubService.findByLoginIdOrThrow(loginId);
 
         PullRequest newPr = PullRequest.builder()
@@ -463,6 +563,9 @@ public class PullRequestService {
                 .action(action)
                 .title(title)
                 .status(ReviewStatus.PENDING)
+                .prState(prState)
+                .headSha(headSha)
+                .baseSha(baseSha)
                 .build();
 
         pullRequestRepository.save(newPr);

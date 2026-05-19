@@ -44,3 +44,5 @@ application-local.yml
 
 ### macOS ###
 .DS_Store
+
+AGENTS.md

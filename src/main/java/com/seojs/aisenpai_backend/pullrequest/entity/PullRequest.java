@@ -41,6 +41,18 @@ public class PullRequest {
     @Enumerated(EnumType.STRING)
     private ReviewStatus status;
 
+    @Column(name = "pr_state", nullable = false)
+    @Enumerated(EnumType.STRING)
+    private PullRequestState prState;
+
+    private String headSha;
+
+    private String baseSha;
+
+    private String reviewStartedHeadSha;
+
+    private String reviewCompletedHeadSha;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -56,6 +68,9 @@ public class PullRequest {
         if (status == null) {
             status = ReviewStatus.PENDING;
         }
+        if (prState == null) {
+            prState = PullRequestState.OPEN;
+        }
     }
 
     @PreUpdate
@@ -68,7 +83,14 @@ public class PullRequest {
         IN_PROGRESS, // 리뷰 진행 중
         COMPLETED, // 리뷰 완료
         FAILED, // 리뷰 실패
-        NEW_CHANGES // 리뷰 후 새 변경사항 있음
+        NEW_CHANGES, // 리뷰 후 새 변경사항 있음
+        STALE // 리뷰 도중 새 커밋이 들어와 오래된 리뷰가 됨
+    }
+
+    public enum PullRequestState {
+        OPEN,
+        CLOSED,
+        MERGED
     }
 
     public void updateStatus(ReviewStatus newStatus) {
@@ -86,10 +108,53 @@ public class PullRequest {
         this.updatedAt = LocalDateTime.now();
     }
 
+    public void updatePullRequestSnapshot(String action, PullRequestState prState, String headSha, String baseSha) {
+        this.action = action;
+        this.prState = prState != null ? prState : PullRequestState.OPEN;
+        this.headSha = headSha;
+        this.baseSha = baseSha;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void markReviewStarted(String startedHeadSha) {
+        this.status = ReviewStatus.IN_PROGRESS;
+        this.reviewStartedHeadSha = startedHeadSha;
+        this.reviewCompletedHeadSha = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public boolean isReviewForCurrentHead(String startedHeadSha) {
+        if (startedHeadSha == null || startedHeadSha.isBlank()) {
+            return headSha == null || headSha.isBlank();
+        }
+        return startedHeadSha.equals(headSha);
+    }
+
+    public void markReviewCompleted(String aiReview, String completedHeadSha) {
+        this.aiReview = aiReview;
+        this.status = ReviewStatus.COMPLETED;
+        this.reviewCompletedHeadSha = completedHeadSha;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void markReviewFailed(String aiReview, String completedHeadSha) {
+        this.aiReview = aiReview;
+        this.status = ReviewStatus.FAILED;
+        this.reviewCompletedHeadSha = completedHeadSha;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void markReviewStale(String aiReview) {
+        this.aiReview = aiReview;
+        this.status = ReviewStatus.STALE;
+        this.reviewCompletedHeadSha = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
     @Builder
     public PullRequest(Integer prNumber, Long repositoryId, String repositoryName, GithubAccount githubAccount,
             String title,
-            String action, ReviewStatus status) {
+            String action, ReviewStatus status, PullRequestState prState, String headSha, String baseSha) {
         this.prNumber = prNumber;
         this.repositoryId = repositoryId;
         this.repositoryName = repositoryName;
@@ -97,6 +162,9 @@ public class PullRequest {
         this.title = title;
         this.action = action;
         this.status = status;
+        this.prState = prState;
+        this.headSha = headSha;
+        this.baseSha = baseSha;
         this.aiReview = null;
     }
 }

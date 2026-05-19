@@ -4,8 +4,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationEventPublisher;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.PullRequestDto;
+import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RefDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RepositoryDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.UserDto;
+import com.seojs.aisenpai_backend.github.dto.PullRequestInfoDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
@@ -184,23 +186,234 @@ class PullRequestServiceTest {
         String aiReview = "Good job";
 
         GithubAccount account = GithubAccount.builder().loginId("user").build();
+        account.initializeAiSettings();
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
                 .prNumber(prNumber)
                 .repositoryName("repo")
                 .githubAccount(account)
+                .headSha("head-1")
                 .build();
 
-        when(pullRequestRepository.findByRepositoryIdAndPrNumber(repoId, prNumber))
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(pr));
 
         // when
-        pullRequestService.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED);
+        pullRequestService.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED, "head-1");
 
         // then
+        assertEquals(PullRequest.ReviewStatus.COMPLETED, pr.getStatus());
+        assertEquals("head-1", pr.getReviewCompletedHeadSha());
         verify(notificationService).createNotification(
                 eq(account),
                 eq(NotificationType.REVIEW_COMPLETE),
                 eq(pr));
+    }
+
+    @Test
+    void updateAiReview_StaleHead_DoesNotCreateCompletedNotification() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        String staleReview = "Review for old commit";
+
+        GithubAccount account = GithubAccount.builder().loginId("user").build();
+        account.initializeAiSettings();
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("new-head")
+                .build();
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+
+        // when
+        pullRequestService.updateAiReview(repoId, prNumber, staleReview, PullRequest.ReviewStatus.COMPLETED,
+                "old-head");
+
+        // then
+        assertEquals(PullRequest.ReviewStatus.STALE, pr.getStatus());
+        assertEquals(staleReview, pr.getAiReview());
+        verify(notificationService, never()).createNotification(
+                any(GithubAccount.class),
+                eq(NotificationType.REVIEW_COMPLETE),
+                any(PullRequest.class));
+    }
+
+    @Test
+    void updateAiReview_OldReviewCompletion_DoesNotOverwriteNewerInProgressReview() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+
+        GithubAccount account = GithubAccount.builder().loginId("user").build();
+        account.initializeAiSettings();
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("new-head")
+                .build();
+        pr.markReviewStarted("new-head");
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+
+        // when
+        pullRequestService.updateAiReview(repoId, prNumber, "old result", PullRequest.ReviewStatus.COMPLETED,
+                "old-head");
+
+        // then
+        assertEquals(PullRequest.ReviewStatus.IN_PROGRESS, pr.getStatus());
+        assertNull(pr.getAiReview());
+        verify(notificationService, never()).createNotification(
+                any(GithubAccount.class),
+                any(NotificationType.class),
+                any(PullRequest.class));
+    }
+
+    @Test
+    void processAndSaveWebhook_SynchronizeDuringReview_MarksStaleAndUpdatesHead() throws Exception {
+        // given
+        String payload = "{}";
+        String signature = "sig";
+        Long repoId = 100L;
+        String repoName = "test-repo";
+        String ownerLogin = "test-owner";
+        Integer prNumber = 10;
+        String title = "New Feature";
+
+        WebhookPayloadDto dto = mock(WebhookPayloadDto.class);
+        RepositoryDto repoDto = new RepositoryDto(repoId, repoName, ownerLogin,
+                new UserDto(ownerLogin, 1, "url"));
+        PullRequestDto prDto = new PullRequestDto(prNumber, title, "body", "open",
+                new UserDto(ownerLogin, 1, "url"), "url", "diff",
+                new RefDto("feature", "new-head"), new RefDto("main", "base-head"), false);
+
+        GithubAccount account = GithubAccount.builder().loginId(ownerLogin).build();
+        PullRequest existingPr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repoName)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.IN_PROGRESS)
+                .headSha("old-head")
+                .baseSha("base-head")
+                .build();
+
+        when(dto.getAction()).thenReturn("synchronize");
+        when(dto.getRepository()).thenReturn(repoDto);
+        when(dto.getPullRequest()).thenReturn(prDto);
+        when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(existingPr));
+
+        // when
+        pullRequestService.processAndSaveWebhook(payload, signature);
+
+        // then
+        assertEquals(PullRequest.ReviewStatus.STALE, existingPr.getStatus());
+        assertEquals("new-head", existingPr.getHeadSha());
+        assertEquals(PullRequest.PullRequestState.OPEN, existingPr.getPrState());
+        verify(pullRequestRepository).save(existingPr);
+    }
+
+    @Test
+    void processAndSaveWebhook_ClosedMerged_UpdatesPrState() throws Exception {
+        // given
+        String payload = "{}";
+        String signature = "sig";
+        Long repoId = 100L;
+        String repoName = "test-repo";
+        String ownerLogin = "test-owner";
+        Integer prNumber = 10;
+
+        WebhookPayloadDto dto = mock(WebhookPayloadDto.class);
+        RepositoryDto repoDto = new RepositoryDto(repoId, repoName, ownerLogin,
+                new UserDto(ownerLogin, 1, "url"));
+        PullRequestDto prDto = new PullRequestDto(prNumber, "title", "body", "closed",
+                new UserDto(ownerLogin, 1, "url"), "url", "diff",
+                new RefDto("feature", "head"), new RefDto("main", "base"), true);
+
+        GithubAccount account = GithubAccount.builder().loginId(ownerLogin).build();
+        PullRequest existingPr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repoName)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.COMPLETED)
+                .headSha("head")
+                .baseSha("base")
+                .build();
+
+        when(dto.getAction()).thenReturn("closed");
+        when(dto.getRepository()).thenReturn(repoDto);
+        when(dto.getPullRequest()).thenReturn(prDto);
+        when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(existingPr));
+
+        // when
+        pullRequestService.processAndSaveWebhook(payload, signature);
+
+        // then
+        assertEquals(PullRequest.PullRequestState.MERGED, existingPr.getPrState());
+        assertEquals(PullRequest.ReviewStatus.COMPLETED, existingPr.getStatus());
+        verify(pullRequestRepository).save(existingPr);
+    }
+
+    @Test
+    void review_DuplicateInProgressForSameHead_DoesNotPublishNewReviewEvent() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        String owner = "user";
+        String repo = "repo";
+        String accessToken = "token";
+        String headSha = "head-1";
+
+        GithubAccount account = GithubAccount.builder().loginId(owner).build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateOpenAiKey("encrypted-key");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repo)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.IN_PROGRESS)
+                .headSha(headSha)
+                .baseSha("base-1")
+                .build();
+        pr.markReviewStarted(headSha);
+
+        PullRequestInfoDto prInfo = new PullRequestInfoDto();
+        PullRequestInfoDto.PullRequestRefDto head = new PullRequestInfoDto.PullRequestRefDto();
+        head.setSha(headSha);
+        PullRequestInfoDto.PullRequestRefDto base = new PullRequestInfoDto.PullRequestRefDto();
+        base.setSha("base-1");
+        prInfo.setHead(head);
+        prInfo.setBase(base);
+        prInfo.setState("open");
+
+        when(githubService.getRepositoryId(accessToken, owner, repo)).thenReturn(repoId);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(githubService.getPullRequestInfo(accessToken, owner, repo, prNumber)).thenReturn(prInfo);
+
+        // when
+        pullRequestService.review(owner, repo, prNumber, accessToken, "gpt-4o-mini");
+
+        // then
+        verify(githubService, never()).getChangedFiles(anyString(), anyString(), anyString(), anyInt());
+        verify(eventPublisher, never()).publishEvent(any());
+        assertEquals(PullRequest.ReviewStatus.IN_PROGRESS, pr.getStatus());
     }
 }

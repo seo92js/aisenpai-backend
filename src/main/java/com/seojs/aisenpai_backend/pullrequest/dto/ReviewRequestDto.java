@@ -18,6 +18,7 @@ public class ReviewRequestDto {
     private String systemPrompt;
     private String encryptedOpenAiKey;
     private String repositoryTree;
+    private String reviewStartedHeadSha;
 
     public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
             String systemPrompt, String encryptedOpenAiKey) {
@@ -28,4 +29,5 @@ public class ReviewRequestDto {
         this.systemPrompt = systemPrompt;
         this.encryptedOpenAiKey = encryptedOpenAiKey;
     }
+
 }
