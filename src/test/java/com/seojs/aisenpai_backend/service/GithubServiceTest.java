@@ -2,6 +2,7 @@ package com.seojs.aisenpai_backend.service;
 
 import com.seojs.aisenpai_backend.ai.service.AiService;
 import com.seojs.aisenpai_backend.exception.GithubAccountNotFoundEx;
+import com.seojs.aisenpai_backend.github.dto.GithubContentResponseDto;
 import com.seojs.aisenpai_backend.github.dto.GitRepositoryResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewSettingsDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookResponseDto;
@@ -15,21 +16,26 @@ import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.util.UriBuilder;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
+import java.net.URI;
 import java.util.*;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
+@SuppressWarnings({ "rawtypes", "unchecked" })
 class GithubServiceTest {
 
     @Mock
@@ -72,6 +78,8 @@ class GithubServiceTest {
         when(webClient.post()).thenReturn(requestBodyUriSpec);
         when(webClient.delete()).thenReturn(requestHeadersUriSpec);
         when(requestHeadersUriSpec.uri(anyString())).thenReturn(requestHeadersSpec);
+        when(requestHeadersUriSpec.uri(ArgumentMatchers.<Function<UriBuilder, URI>>any()))
+                .thenReturn(requestHeadersSpec);
         when(requestHeadersUriSpec.uri(anyString(), any(Object[].class))).thenReturn(requestHeadersSpec);
         when(requestHeadersSpec.header(anyString(), anyString())).thenReturn(requestHeadersSpec);
         when(requestHeadersSpec.retrieve()).thenReturn(responseSpec);
@@ -261,6 +269,24 @@ class GithubServiceTest {
                 () -> githubService.findAccessTokenByLoginId(loginId));
 
         assertEquals("No accessToken for loginId: " + loginId, exception.getMessage());
+    }
+
+    @Test
+    void getFileContent_Base64Content_DecodesContent() {
+        // given
+        String encodedContent = Base64.getMimeEncoder().encodeToString("hello world".getBytes());
+        GithubContentResponseDto contentResponse = new GithubContentResponseDto();
+        contentResponse.setEncoding("base64");
+        contentResponse.setContent(encodedContent);
+
+        when(responseSpec.bodyToMono(GithubContentResponseDto.class)).thenReturn(Mono.just(contentResponse));
+
+        // when
+        String result = githubService.getFileContent("token", "owner", "repo", "src/App.ts", "head-sha");
+
+        // then
+        assertEquals("hello world", result);
+        verify(requestHeadersUriSpec).uri(any(Function.class));
     }
 
     @Test

@@ -20,6 +20,7 @@ import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
 import com.seojs.aisenpai_backend.notification.service.NotificationService;
 import com.seojs.aisenpai_backend.pullrequest.dto.PullRequestResponseDto;
+import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.PullRequestState;
@@ -50,6 +51,7 @@ public class PullRequestService {
     private final TokenEncryptionService tokenEncryptionService;
     private final NotificationService notificationService;
     private final ReviewAnchorService reviewAnchorService;
+    private final ReviewContextService reviewContextService;
 
     private record ReviewProcessingResult(
             String accessToken,
@@ -177,8 +179,7 @@ public class PullRequestService {
         String systemPrompt = githubAccount.getAiSettings().buildSystemPrompt();
         String encryptedOpenAiKey = githubAccount.getAiSettings().getOpenAiKey();
 
-        // 트리 구조 가져오기
-        String repositoryTreeString = null;
+        GitTreeResponseDto treeDto = null;
         try {
             String targetTreeSha = "HEAD";
             if (prInfo != null && prInfo.getBase() != null && prInfo.getBase().getSha() != null) {
@@ -186,24 +187,23 @@ public class PullRequestService {
                 log.info("Found base branch SHA for PR #{}: {}", prNumber, targetTreeSha);
             }
 
-            GitTreeResponseDto treeDto = githubService.getRepositoryTree(accessToken, owner, repo, targetTreeSha, true);
-            if (treeDto != null && treeDto.getTree() != null) {
-                StringBuilder sb = new StringBuilder();
-                for (GitTreeResponseDto.GitTreeItemDto item : treeDto.getTree()) {
-                    sb.append("- ").append(item.getType()).append(": ").append(item.getPath()).append("\n");
-                }
-                repositoryTreeString = sb.toString();
-                log.info("Successfully fetched repository tree context for PR #{}", prNumber);
-            }
+            treeDto = githubService.getRepositoryTree(accessToken, owner, repo, targetTreeSha, true);
+            log.info("Successfully fetched repository tree context for PR #{}", prNumber);
         } catch (Exception e) {
             log.warn(
                     "Failed to fetch repository tree context for PR #{}. Proceeding without structural context. Error: {}",
                     prNumber, e.getMessage());
         }
 
+        ReviewContextDto reviewContext = reviewContextService.buildReviewContext(accessToken, owner, repo, prNumber,
+                prInfo, filteredFiles, treeDto, ignorePatterns);
+        String repositoryTreeString = reviewContext.getRepositoryTree() != null
+                ? reviewContext.getRepositoryTree().getSummary()
+                : null;
+
         eventPublisher.publishEvent(
                 new ReviewRequestDto(repositoryId, prNumber, filteredFiles, model, systemPrompt, encryptedOpenAiKey,
-                        repositoryTreeString, currentHeadSha));
+                        repositoryTreeString, currentHeadSha, reviewContext));
     }
 
     /**

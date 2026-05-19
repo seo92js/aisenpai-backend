@@ -21,6 +21,5 @@ class AiServiceTest {
         String result = aiService.callAiChat("key 넣어야 함", systemPrompt, userPrompt, "gpt-4o-mini", 0.7);
         assertNotNull(result);
         assertFalse(result.isBlank());
-        System.out.println("AI 응답: " + result);
     }
 }
