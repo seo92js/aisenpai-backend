@@ -502,6 +502,19 @@ public class PullRequestService {
         } else {
             createNewPullRequest(repoId, repoName, loginId, prNumber, action, title, prState, headSha, baseSha);
         }
+
+        evictRepositoryCache(loginId);
+    }
+
+    private void evictRepositoryCache(String loginId) {
+        try {
+            String accessToken = githubService.findAccessTokenByLoginId(loginId);
+            if (accessToken != null) {
+                githubService.evictRepositoryCache(accessToken);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to evict repository cache for loginId {}: {}", loginId, e.getMessage());
+        }
     }
 
     /**
