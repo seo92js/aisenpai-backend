@@ -35,10 +35,12 @@ class AiReviewSettingsTest {
         String prompt = settings.buildSystemPrompt();
 
         // then
-        System.out.println(prompt);
         assertTrue(prompt.contains("### 코드 리뷰 규칙"));
         assertTrue(prompt.contains("- [Target: *.java] DTO에는 @Builder 필수"));
         assertFalse(prompt.contains("console.log 금지"));
+        assertTrue(prompt.contains("\"path\""));
+        assertTrue(prompt.contains("\"body\""));
+        assertTrue(prompt.contains("comments에는 diff의 추가된 라인"));
     }
 
 }

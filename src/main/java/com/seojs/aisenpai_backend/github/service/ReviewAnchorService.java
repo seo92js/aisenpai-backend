@@ -15,8 +15,11 @@ public class ReviewAnchorService {
             return null;
         }
 
-        // 코드가 너무 길면 첫 줄만 사용
-        String targetLine = codeSnippet.lines().findFirst().orElse("").trim();
+        String targetLine = codeSnippet.lines()
+                .map(String::trim)
+                .filter(line -> !line.isEmpty())
+                .findFirst()
+                .orElse("");
         if (targetLine.isEmpty()) {
             return null;
         }
@@ -53,16 +56,16 @@ public class ReviewAnchorService {
                 currentLineInFile++;
             } else if (line.startsWith("+")) {
                 currentLineInFile++;
-                // 추가된 라인(변경분)이므로 검색 대상
+                // 추가된 라인만 GitHub inline comment 대상이다.
                 String cleanLine = line.substring(1).trim();
 
-                // 검색어 포함 여부 확인
-                if (cleanLine.contains(targetLine)) {
+                if (cleanLine.equals(targetLine)) {
                     return currentLineInFile;
                 }
             }
         }
 
+        log.info("Could not anchor review comment. snippet='{}'", targetLine);
         return null;
     }
 }

@@ -93,7 +93,7 @@ public class AiReviewSettings {
     public String buildSystemPrompt() {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 시니어 코드 리뷰어입니다.\n\n");
-        sb.append("주어진 변경된 파일 목록을 바탕으로 코드 리뷰를 작성해 주세요.\n\n");
+        sb.append("주어진 변경된 파일 목록과 저장소 구조 정보를 바탕으로 코드 리뷰를 작성해 주세요.\n\n");
 
         sb.append("### 리뷰 톤\n");
         sb.append(this.reviewTone.getPrompt()).append("\n\n");
@@ -132,17 +132,18 @@ public class AiReviewSettings {
 
         sb.append("### 응답 형식 (매우 중요)\n");
         sb.append("반드시 아래 JSON 형식으로만 응답해 주세요. 마크다운 코드 블록(```json 등)도 포함하지 말고 오직 JSON 문자열만 반환하세요.\n");
-        sb.append("파일명(file)은 제공된 diff 상의 경로와 정확히 일치해야 합니다.\n");
-        sb.append("라인 번호(line) 대신, 지적하고자 하는 코드의 스니펫(codeSnippet)을 정확히 포함해 주세요.\n");
-        sb.append("codeSnippet은 diff에 포함된 코드(추가된 라인) 중 한 줄과 **정확히** 일치해야 합니다. (공백 포함)\n");
-        sb.append("수정되지 않은 라인에 대한 코멘트가 필요하다면, 'generalReview'에 포함시켜 주세요.\n");
+        sb.append("판단은 diff와 repositoryTree를 함께 참고하되, comments에는 diff의 추가된 라인(+ 라인)에 직접 연결할 수 있는 지적만 포함하세요.\n");
+        sb.append("path는 제공된 diff 상의 filename과 정확히 일치해야 합니다.\n");
+        sb.append("라인 번호(line)는 작성하지 마세요. 대신 지적하고자 하는 추가 라인의 codeSnippet을 포함해 주세요.\n");
+        sb.append("codeSnippet은 diff에 포함된 추가 라인 중 한 줄과 일치해야 하며, diff 표시용 '+' 문자는 제외하세요.\n");
+        sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree만 보고 발견한 문제, 파일 전체 맥락이 더 필요한 문제는 comments가 아니라 generalReview에 포함하세요.\n");
         sb.append("{\n");
         sb.append("  \"generalReview\": \"전반적인 리뷰 요약 (한국어)\",\n");
         sb.append("  \"comments\": [\n");
         sb.append("    {\n");
-        sb.append("      \"file\": \"src/main/java/Example.java\",\n");
+        sb.append("      \"path\": \"src/main/java/Example.java\",\n");
         sb.append("      \"codeSnippet\": \"지적할 코드의 한 줄 (필수)\",\n");
-        sb.append("      \"comment\": \"코멘트 내용 (한국어)\"\n");
+        sb.append("      \"body\": \"코멘트 내용 (한국어)\"\n");
         sb.append("    }\n");
         sb.append("  ]\n");
         sb.append("}\n");

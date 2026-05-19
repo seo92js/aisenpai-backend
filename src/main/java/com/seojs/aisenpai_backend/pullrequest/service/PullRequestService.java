@@ -51,6 +51,12 @@ public class PullRequestService {
     private final NotificationService notificationService;
     private final ReviewAnchorService reviewAnchorService;
 
+    private record ReviewProcessingResult(
+            String accessToken,
+            AiReviewResponseDto aiResponse,
+            List<ReviewCommentDto> enrichedComments) {
+    }
+
     /**
      * PR 웹훅 이벤트를 처리하고 데이터베이스에 저장
      */
@@ -246,6 +252,8 @@ public class PullRequestService {
         GithubAccount account = pr.getGithubAccount();
 
         if (status == ReviewStatus.COMPLETED) {
+            ReviewProcessingResult reviewProcessingResult = prepareReviewForDisplay(account, pr, aiReview);
+
             notificationService.createNotification(
                     account,
                     NotificationType.REVIEW_COMPLETE,
@@ -253,7 +261,7 @@ public class PullRequestService {
 
             // GitHub PR에 댓글 자동 게시
             if (Boolean.TRUE.equals(account.getAiSettings().getAutoPostToGithub())) {
-                processAndPostReview(account, pr, aiReview);
+                processAndPostReview(account, pr, aiReview, reviewProcessingResult);
             }
         } else if (status == ReviewStatus.FAILED) {
             notificationService.createNotification(
@@ -263,39 +271,46 @@ public class PullRequestService {
         }
     }
 
+    private ReviewProcessingResult prepareReviewForDisplay(GithubAccount account, PullRequest pr, String aiReview) {
+        try {
+            String sanitizedAiReview = sanitizeAiReview(aiReview);
+            AiReviewResponseDto aiResponse = objectMapper.readValue(sanitizedAiReview, AiReviewResponseDto.class);
+            List<ReviewCommentDto> comments = aiResponse.getComments();
+            if (comments == null || comments.isEmpty()) {
+                return new ReviewProcessingResult(tokenEncryptionService.decryptToken(account.getAccessToken()),
+                        aiResponse, List.of());
+            }
+
+            String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
+            List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken,
+                    account.getLoginId(), pr.getRepositoryName(), pr.getPrNumber());
+            List<ReviewCommentDto> enrichedComments = calculateLineNumbers(comments, changedFiles);
+            saveEnrichedReviewToDb(pr, aiResponse, enrichedComments);
+            return new ReviewProcessingResult(accessToken, aiResponse, enrichedComments);
+        } catch (Exception e) {
+            log.warn("Failed to normalize AI review for PR #{}: {}", pr.getPrNumber(), e.getMessage());
+            return null;
+        }
+    }
+
     /**
      * AI 리뷰를 처리하고 GitHub에 게시 (파싱 및 분기 처리)
      */
-    private void processAndPostReview(GithubAccount account, PullRequest pr, String aiReview) {
+    private void processAndPostReview(GithubAccount account, PullRequest pr, String aiReview,
+            ReviewProcessingResult reviewProcessingResult) {
         try {
-            String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
-            String sanitizedAiReview = sanitizeAiReview(aiReview);
-
-            // Diff 정보 가져오기 (라인 매칭용)
-            List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken,
-                    pr.getGithubAccount().getLoginId(), pr.getRepositoryName(), pr.getPrNumber());
-
-            try {
-                AiReviewResponseDto aiResponse = objectMapper.readValue(sanitizedAiReview, AiReviewResponseDto.class);
-
-                if (aiResponse.getComments() != null && !aiResponse.getComments().isEmpty()) {
-                    List<ReviewCommentDto> enrichedComments = calculateLineNumbers(aiResponse.getComments(),
-                            changedFiles);
-
-                    // DB 업데이트 (라인 번호 포함된 데이터 저장)
-                    saveEnrichedReviewToDb(pr, aiResponse, enrichedComments);
-
-                    // GitHub 게시 (API용 DTO 변환 후 전송)
-                    postCommentsToGitHub(accessToken, account, pr, aiResponse, enrichedComments);
-
-                } else {
-                    // 코멘트가 없으면 일반 리뷰 게시 (총평만)
-                    String body = aiResponse.getGeneralReview() != null ? aiResponse.getGeneralReview() : aiReview;
-                    postGeneralComment(accessToken, account, pr, body);
-                }
-            } catch (Exception e) {
-                log.warn("Failed to parse AI review as JSON, falling back to comment. Error: {}", e.getMessage());
+            if (reviewProcessingResult == null) {
+                String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
                 postGeneralComment(accessToken, account, pr, aiReview);
+                return;
+            }
+
+            if (!reviewProcessingResult.enrichedComments().isEmpty()) {
+                postCommentsToGitHub(reviewProcessingResult.accessToken(), account, pr,
+                        reviewProcessingResult.aiResponse(), reviewProcessingResult.enrichedComments());
+            } else {
+                postGeneralComment(reviewProcessingResult.accessToken(), account, pr,
+                        defaultGeneralReview(reviewProcessingResult.aiResponse().getGeneralReview()));
             }
         } catch (Exception e) {
             log.warn("Failed to process and post review to GitHub PR #{}: {}", pr.getPrNumber(), e.getMessage());
@@ -305,13 +320,19 @@ public class PullRequestService {
     private List<ReviewCommentDto> calculateLineNumbers(List<ReviewCommentDto> comments,
             List<ChangedFileDto> changedFiles) {
         List<ReviewCommentDto> enrichedComments = new java.util.ArrayList<>();
+        int anchoredCount = 0;
         for (var comment : comments) {
             String filePatch = changedFiles.stream()
                     .filter(f -> f.getFilename().equals(comment.getPath()))
                     .findFirst()
                     .map(ChangedFileDto::getPatch)
                     .orElse(null);
-            Integer line = reviewAnchorService.findLineNumber(filePatch, comment.getCodeSnippet());
+            Integer line = isValidReviewComment(comment)
+                    ? reviewAnchorService.findLineNumber(filePatch, comment.getCodeSnippet())
+                    : null;
+            if (line != null) {
+                anchoredCount++;
+            }
 
             enrichedComments.add(ReviewCommentDto.builder()
                     .path(comment.getPath())
@@ -321,7 +342,15 @@ public class PullRequestService {
                     .body(comment.getBody())
                     .build());
         }
+        log.info("Review anchor result: anchored={}, fallback={}", anchoredCount, comments.size() - anchoredCount);
         return enrichedComments;
+    }
+
+    private boolean isValidReviewComment(ReviewCommentDto comment) {
+        return comment != null
+                && hasText(comment.getPath())
+                && hasText(comment.getCodeSnippet())
+                && hasText(comment.getBody());
     }
 
     private void saveEnrichedReviewToDb(PullRequest pr, AiReviewResponseDto originalResponse,
@@ -338,7 +367,7 @@ public class PullRequestService {
     private void postCommentsToGitHub(String accessToken, GithubAccount account, PullRequest pr,
             AiReviewResponseDto aiResponse, List<ReviewCommentDto> enrichedComments) {
         List<GithubApiCommentDto> commentsToPost = enrichedComments.stream()
-                .filter(c -> c.getLine() != null)
+                .filter(c -> c.getLine() != null && isValidReviewComment(c))
                 .map(c -> GithubApiCommentDto.builder()
                         .path(c.getPath())
                         .line(c.getLine())
@@ -348,11 +377,11 @@ public class PullRequestService {
                 .toList();
 
         StringBuilder manualFallback = new StringBuilder();
+        boolean inlinePostFailed = false;
 
-        // 1. 인라인 코멘트 게시
         if (!commentsToPost.isEmpty()) {
             GithubReviewRequestDto reviewRequest = GithubReviewRequestDto.builder()
-                    .body(formatReviewForGithub(aiResponse.getGeneralReview()))
+                    .body(formatReviewForGithub(defaultGeneralReview(aiResponse.getGeneralReview())))
                     .event("COMMENT")
                     .comments(commentsToPost)
                     .build();
@@ -362,24 +391,46 @@ public class PullRequestService {
                         pr.getPrNumber(), reviewRequest);
             } catch (Exception e) {
                 log.warn("Failed to post inline review: {}", e.getMessage());
-                manualFallback.append("\n(Also failed to post inline comments due to error)\n");
+                inlinePostFailed = true;
             }
         }
 
-        // Fallback 코멘트 준비 (라인 매칭 실패한 것들)
-        enrichedComments.stream().filter(c -> c.getLine() == null).forEach(c -> {
-            manualFallback.append(String.format("- **%s**: %s\n> `%s`\n\n",
-                    c.getPath(), c.getBody(), c.getCodeSnippet()));
-        });
+        boolean shouldFallbackAllComments = inlinePostFailed;
+        List<ReviewCommentDto> fallbackComments = enrichedComments.stream()
+                .filter(c -> shouldFallbackAllComments || c.getLine() == null || !isValidReviewComment(c))
+                .toList();
 
-        // Fallback 게시 (혹은 인라인 실패 시에도 게시)
+        if (inlinePostFailed) {
+            manualFallback.append("### 인라인 리뷰 게시 실패\n");
+            manualFallback.append("GitHub 인라인 리뷰 API 호출에 실패해 코멘트를 일반 댓글로 남깁니다.\n\n");
+        }
+        appendFallbackComments(manualFallback, fallbackComments);
+
         if (manualFallback.length() > 0) {
-            String fallbackBody = (commentsToPost.isEmpty() ? aiResponse.getGeneralReview() + "\n\n" : "") +
-                    "### 추가 코멘트 (라인 매칭 실패)\n" + manualFallback.toString();
+            boolean includeGeneralReview = inlinePostFailed || commentsToPost.isEmpty();
+            String fallbackBody = (includeGeneralReview ? defaultGeneralReview(aiResponse.getGeneralReview()) + "\n\n"
+                    : "")
+                    + "### 추가 코멘트\n"
+                    + manualFallback;
             postGeneralComment(accessToken, account, pr, fallbackBody);
         } else if (commentsToPost.isEmpty()) {
-            postGeneralComment(accessToken, account, pr, aiResponse.getGeneralReview());
+            postGeneralComment(accessToken, account, pr, defaultGeneralReview(aiResponse.getGeneralReview()));
         }
+    }
+
+    private void appendFallbackComments(StringBuilder fallback, List<ReviewCommentDto> comments) {
+        comments.stream()
+                .filter(this::isValidReviewComment)
+                .forEach(c -> fallback.append(String.format("- **%s**: %s\n  - 스니펫: `%s`\n\n",
+                        c.getPath(), c.getBody(), c.getCodeSnippet())));
+    }
+
+    private String defaultGeneralReview(String generalReview) {
+        return hasText(generalReview) ? generalReview : "검토 결과 요약이 없습니다.";
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**

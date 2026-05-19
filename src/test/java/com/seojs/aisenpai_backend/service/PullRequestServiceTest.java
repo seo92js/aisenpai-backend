@@ -3,6 +3,8 @@ package com.seojs.aisenpai_backend.service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationEventPublisher;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
+import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.dto.GithubReviewRequestDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.PullRequestDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RefDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RepositoryDto;
@@ -21,6 +23,7 @@ import com.seojs.aisenpai_backend.notification.service.NotificationService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
@@ -445,6 +448,141 @@ class PullRequestServiceTest {
                 any(GithubAccount.class),
                 any(NotificationType.class),
                 any(PullRequest.class));
+    }
+
+    @Test
+    void updateAiReview_AutoPost_PostsOnlyAnchoredCommentsInlineAndFallbacksTheRest() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
+                webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
+                notificationService, new ReviewAnchorService());
+
+        GithubAccount account = GithubAccount.builder()
+                .loginId("user")
+                .accessToken("encrypted-token")
+                .build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+
+        String aiReview = """
+                {
+                  "generalReview": "전체 요약입니다.",
+                  "comments": [
+                    {
+                      "path": "src/App.java",
+                      "codeSnippet": "private final String name;",
+                      "body": "이 값은 생성자에서 검증하세요."
+                    },
+                    {
+                      "path": "src/App.java",
+                      "codeSnippet": "void run() {}",
+                      "body": "기존 라인에 대한 의견입니다."
+                    }
+                  ]
+                }
+                """;
+        String patch = """
+                @@ -1,3 +1,4 @@
+                 class App {
+                +    private final String name;
+                     void run() {}
+                 }
+                """;
+        ChangedFileDto changedFile = new ChangedFileDto(
+                "src/App.java", "modified", 1, 0, 1, 4, "sha", "blob", "raw", "contents", patch);
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
+        when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
+                .thenReturn(List.of(changedFile));
+
+        // when
+        service.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED, "head");
+
+        // then
+        ArgumentCaptor<GithubReviewRequestDto> reviewCaptor = ArgumentCaptor.forClass(GithubReviewRequestDto.class);
+        verify(githubService).postPRReview(eq("access-token"), eq("user"), eq("repo"), eq(prNumber),
+                reviewCaptor.capture());
+        assertEquals(1, reviewCaptor.getValue().getComments().size());
+        assertEquals(2, reviewCaptor.getValue().getComments().get(0).getLine());
+
+        ArgumentCaptor<String> commentCaptor = ArgumentCaptor.forClass(String.class);
+        verify(githubService).postPRComment(eq("access-token"), eq("user"), eq("repo"), eq(prNumber),
+                commentCaptor.capture());
+        assertTrue(commentCaptor.getValue().contains("기존 라인에 대한 의견입니다."));
+        assertFalse(commentCaptor.getValue().contains("이 값은 생성자에서 검증하세요."));
+        assertFalse(commentCaptor.getValue().contains("전체 요약입니다."));
+    }
+
+    @Test
+    void updateAiReview_AutoPostDisabled_StoresEnrichedReviewForDisplay() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
+                webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
+                notificationService, new ReviewAnchorService());
+
+        GithubAccount account = GithubAccount.builder()
+                .loginId("user")
+                .accessToken("encrypted-token")
+                .build();
+        account.initializeAiSettings();
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+
+        String aiReview = """
+                {
+                  "generalReview": "전체 요약입니다.",
+                  "comments": [
+                    {
+                      "path": "src/App.java",
+                      "codeSnippet": "private final String name;",
+                      "body": "이 값은 생성자에서 검증하세요."
+                    }
+                  ]
+                }
+                """;
+        String patch = """
+                @@ -1,3 +1,4 @@
+                 class App {
+                +    private final String name;
+                     void run() {}
+                 }
+                """;
+        ChangedFileDto changedFile = new ChangedFileDto(
+                "src/App.java", "modified", 1, 0, 1, 4, "sha", "blob", "raw", "contents", patch);
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
+        when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
+                .thenReturn(List.of(changedFile));
+
+        // when
+        service.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED, "head");
+
+        // then
+        assertTrue(pr.getAiReview().contains("\"line\":2"));
+        verify(githubService, never()).postPRReview(anyString(), anyString(), anyString(), anyInt(), any());
+        verify(githubService, never()).postPRComment(anyString(), anyString(), anyString(), anyInt(), anyString());
     }
 
     @Test
