@@ -42,9 +42,13 @@ public class PullRequestReviewListener {
 
         try {
             Map<String, Object> aiPayload = new HashMap<>();
-            aiPayload.put("changedFiles", changedFiles);
-            if (dto.getRepositoryTree() != null) {
-                aiPayload.put("repositoryTree", dto.getRepositoryTree());
+            if (dto.getReviewContext() != null) {
+                aiPayload.put("reviewContext", dto.getReviewContext());
+            } else {
+                aiPayload.put("changedFiles", changedFiles);
+                if (dto.getRepositoryTree() != null) {
+                    aiPayload.put("repositoryTree", dto.getRepositoryTree());
+                }
             }
 
             String userPrompt = objectMapper.writeValueAsString(aiPayload);

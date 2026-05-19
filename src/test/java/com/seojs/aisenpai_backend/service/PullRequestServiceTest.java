@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationEventPublisher;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.dto.GitTreeResponseDto;
 import com.seojs.aisenpai_backend.github.dto.GithubReviewRequestDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.PullRequestDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RefDto;
@@ -16,8 +17,11 @@ import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.dto.PullRequestResponseDto;
+import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto;
+import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
+import com.seojs.aisenpai_backend.pullrequest.service.ReviewContextService;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
 import com.seojs.aisenpai_backend.notification.service.NotificationService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
@@ -61,6 +65,9 @@ class PullRequestServiceTest {
     @Mock
     private ReviewAnchorService reviewAnchorService;
 
+    @Mock
+    private ReviewContextService reviewContextService;
+
     private PullRequestService pullRequestService;
 
     @BeforeEach
@@ -68,7 +75,7 @@ class PullRequestServiceTest {
         MockitoAnnotations.openMocks(this);
         pullRequestService = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, objectMapper, eventPublisher, tokenEncryptionService,
-                notificationService, reviewAnchorService);
+                notificationService, reviewAnchorService, reviewContextService);
     }
 
     @Test
@@ -457,7 +464,7 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
-                notificationService, new ReviewAnchorService());
+                notificationService, new ReviewAnchorService(), reviewContextService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -532,7 +539,7 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
-                notificationService, new ReviewAnchorService());
+                notificationService, new ReviewAnchorService(), reviewContextService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -679,6 +686,74 @@ class PullRequestServiceTest {
         // then
         verify(githubService, never()).getChangedFiles(anyString(), anyString(), anyString(), anyInt());
         verify(eventPublisher, never()).publishEvent(any());
+        assertEquals(PullRequest.ReviewStatus.IN_PROGRESS, pr.getStatus());
+    }
+
+    @Test
+    void review_OpenPr_BuildsReviewContextAndPublishesReviewEvent() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        String owner = "user";
+        String repo = "repo";
+        String accessToken = "token";
+
+        GithubAccount account = GithubAccount.builder().loginId(owner).build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateOpenAiKey("encrypted-key");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repo)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.PENDING)
+                .headSha("old-head")
+                .baseSha("old-base")
+                .build();
+
+        PullRequestInfoDto prInfo = new PullRequestInfoDto();
+        PullRequestInfoDto.PullRequestRefDto head = new PullRequestInfoDto.PullRequestRefDto();
+        head.setSha("head");
+        PullRequestInfoDto.PullRequestRefDto base = new PullRequestInfoDto.PullRequestRefDto();
+        base.setSha("base");
+        prInfo.setHead(head);
+        prInfo.setBase(base);
+        prInfo.setState("open");
+
+        ChangedFileDto changedFile = new ChangedFileDto(
+                "src/App.java", "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents",
+                "@@ -1 +1 @@\n+class App {}");
+        GitTreeResponseDto treeDto = new GitTreeResponseDto();
+        ReviewContextDto reviewContext = ReviewContextDto.builder()
+                .repositoryTree(ReviewContextDto.RepositoryTreeContextDto.builder()
+                        .summary("- blob: src/App.java\n")
+                        .truncated(false)
+                        .build())
+                .changedFiles(List.of())
+                .relatedFiles(List.of())
+                .build();
+
+        when(githubService.getRepositoryId(accessToken, owner, repo)).thenReturn(repoId);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(githubService.getPullRequestInfo(accessToken, owner, repo, prNumber)).thenReturn(prInfo);
+        when(githubService.getChangedFiles(accessToken, owner, repo, prNumber)).thenReturn(List.of(changedFile));
+        when(githubService.getRepositoryTree(accessToken, owner, repo, "base", true)).thenReturn(treeDto);
+        when(reviewContextService.buildReviewContext(eq(accessToken), eq(owner), eq(repo), eq(prNumber), eq(prInfo),
+                eq(List.of(changedFile)), eq(treeDto), anyList())).thenReturn(reviewContext);
+
+        // when
+        pullRequestService.review(owner, repo, prNumber, accessToken, "gpt-4o-mini");
+
+        // then
+        ArgumentCaptor<Object> eventCaptor = ArgumentCaptor.forClass(Object.class);
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        ReviewRequestDto event = (ReviewRequestDto) eventCaptor.getValue();
+        assertEquals(reviewContext, event.getReviewContext());
+        assertEquals("- blob: src/App.java\n", event.getRepositoryTree());
+        assertEquals("head", event.getReviewStartedHeadSha());
         assertEquals(PullRequest.ReviewStatus.IN_PROGRESS, pr.getStatus());
     }
 }

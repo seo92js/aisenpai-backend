@@ -21,6 +21,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -293,6 +295,42 @@ public class GithubService {
         } catch (Exception e) {
             log.error("Failed to fetch PR info for {}/{} PR #{}", owner, repo, prNumber, e);
             throw new GitHubApiEx("Failed to get PR info", e);
+        }
+    }
+
+    /**
+     * 특정 ref 기준 파일 내용을 조회한다.
+     */
+    public String getFileContent(String accessToken, String owner, String repo, String path, String ref) {
+        try {
+            GithubContentResponseDto response = webClientBuilder.build()
+                    .get()
+                    .uri(uriBuilder -> uriBuilder
+                            .scheme("https")
+                            .host("api.github.com")
+                            .path("/repos/{owner}/{repo}/contents/")
+                            .path(path)
+                            .queryParam("ref", ref)
+                            .build(owner, repo))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .retrieve()
+                    .bodyToMono(GithubContentResponseDto.class)
+                    .block();
+
+            if (response == null || response.getContent() == null) {
+                return null;
+            }
+
+            if ("base64".equalsIgnoreCase(response.getEncoding())) {
+                String normalizedContent = response.getContent().replaceAll("\\s", "");
+                return new String(Base64.getDecoder().decode(normalizedContent), StandardCharsets.UTF_8);
+            }
+
+            return response.getContent();
+        } catch (Exception e) {
+            log.error("Failed to fetch file content for {}/{} {} at {}: {}", owner, repo, path, ref, e.getMessage());
+            throw new GitHubApiEx("Failed to get file content", e);
         }
     }
 

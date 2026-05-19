@@ -29,7 +29,6 @@ class GithubTreeApiTest {
         String branch = "main";
 
         if (accessToken == null || accessToken.isBlank()) {
-            System.out.println("GITHUB_TEST_TOKEN 환경 변수가 없어 테스트를 스킵합니다.");
             return;
         }
 
@@ -40,13 +39,8 @@ class GithubTreeApiTest {
         assertThat(treeResponse).isNotNull();
         assertThat(treeResponse.getTree()).isNotEmpty();
 
-        System.out.println("가져온 항목 수: " + treeResponse.getTree().size());
-
         boolean hasFile = treeResponse.getTree().stream()
                 .anyMatch(item -> "blob".equals(item.getType()));
         assertThat(hasFile).isTrue();
-        treeResponse.getTree().stream()
-                .limit(10)
-                .forEach(item -> System.out.println(item.getType() + " - " + item.getPath()));
     }
 }

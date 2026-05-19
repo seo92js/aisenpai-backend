@@ -1,7 +1,6 @@
 package com.seojs.aisenpai_backend.pullrequest.dto;
 
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
-import lombok.AllArgsConstructor;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 
@@ -9,7 +8,6 @@ import java.util.List;
 
 @Getter
 @NoArgsConstructor
-@AllArgsConstructor
 public class ReviewRequestDto {
     private Long repositoryId;
     private Integer prNumber;
@@ -19,6 +17,7 @@ public class ReviewRequestDto {
     private String encryptedOpenAiKey;
     private String repositoryTree;
     private String reviewStartedHeadSha;
+    private ReviewContextDto reviewContext;
 
     public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
             String systemPrompt, String encryptedOpenAiKey) {
@@ -30,4 +29,17 @@ public class ReviewRequestDto {
         this.encryptedOpenAiKey = encryptedOpenAiKey;
     }
 
+    public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
+            String systemPrompt, String encryptedOpenAiKey, String repositoryTree, String reviewStartedHeadSha,
+            ReviewContextDto reviewContext) {
+        this.repositoryId = repositoryId;
+        this.prNumber = prNumber;
+        this.changedFiles = changedFiles;
+        this.model = model;
+        this.systemPrompt = systemPrompt;
+        this.encryptedOpenAiKey = encryptedOpenAiKey;
+        this.repositoryTree = repositoryTree;
+        this.reviewStartedHeadSha = reviewStartedHeadSha;
+        this.reviewContext = reviewContext;
+    }
 }
