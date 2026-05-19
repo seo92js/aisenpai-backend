@@ -358,6 +358,7 @@ class PullRequestServiceTest {
         when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(existingPr));
+        when(githubService.findAccessTokenByLoginId(ownerLogin)).thenReturn("access-token");
 
         // when
         pullRequestService.processAndSaveWebhook(payload, signature);
@@ -366,6 +367,7 @@ class PullRequestServiceTest {
         assertEquals(PullRequest.PullRequestState.MERGED, existingPr.getPrState());
         assertEquals(PullRequest.ReviewStatus.COMPLETED, existingPr.getStatus());
         verify(pullRequestRepository).save(existingPr);
+        verify(githubService).evictRepositoryCache("access-token");
     }
 
     @Test
