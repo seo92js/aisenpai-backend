@@ -131,6 +131,11 @@ public class PullRequestService {
         pr.updatePullRequestSnapshot(pr.getAction(), resolvePrState(prInfo, pr.getPrState()), currentHeadSha,
                 currentBaseSha);
 
+        if (pr.getPrState() != PullRequestState.OPEN) {
+            log.info("Skipping review request for PR #{} because PR state is {}", prNumber, pr.getPrState());
+            return;
+        }
+
         if (pr.getStatus() == ReviewStatus.IN_PROGRESS && pr.isReviewForCurrentHead(currentHeadSha)) {
             log.info("Skipping duplicate review request for PR #{} at head {}", prNumber, currentHeadSha);
             return;
@@ -208,6 +213,13 @@ public class PullRequestService {
     public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
             ReviewStatus status, String reviewStartedHeadSha) {
         PullRequest pr = findWithLockByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
+
+        if (reviewStartedHeadSha != null && pr.getPrState() != PullRequestState.OPEN) {
+            pr.markReviewStale(aiReview);
+            log.info("Marked review for PR #{} as stale because PR state is {}. reviewedHead={}", prNumber,
+                    pr.getPrState(), reviewStartedHeadSha);
+            return;
+        }
 
         if (reviewStartedHeadSha != null && !pr.isReviewForCurrentHead(reviewStartedHeadSha)) {
             if (pr.getReviewStartedHeadSha() != null && !reviewStartedHeadSha.equals(pr.getReviewStartedHeadSha())) {
@@ -508,6 +520,8 @@ public class PullRequestService {
                     || currentStatus == ReviewStatus.STALE) {
                 existingPr.updateStatus(ReviewStatus.NEW_CHANGES);
             }
+        } else if (prState != PullRequestState.OPEN && currentStatus == ReviewStatus.IN_PROGRESS) {
+            existingPr.updateStatus(ReviewStatus.STALE);
         }
 
         existingPr.updatePullRequestSnapshot(action, prState, nextHeadSha, nextBaseSha);

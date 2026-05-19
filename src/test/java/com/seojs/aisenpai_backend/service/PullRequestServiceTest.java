@@ -369,6 +369,131 @@ class PullRequestServiceTest {
     }
 
     @Test
+    void processAndSaveWebhook_ClosedDuringReview_MarksStale() throws Exception {
+        // given
+        String payload = "{}";
+        String signature = "sig";
+        Long repoId = 100L;
+        String repoName = "test-repo";
+        String ownerLogin = "test-owner";
+        Integer prNumber = 10;
+
+        WebhookPayloadDto dto = mock(WebhookPayloadDto.class);
+        RepositoryDto repoDto = new RepositoryDto(repoId, repoName, ownerLogin,
+                new UserDto(ownerLogin, 1, "url"));
+        PullRequestDto prDto = new PullRequestDto(prNumber, "title", "body", "closed",
+                new UserDto(ownerLogin, 1, "url"), "url", "diff",
+                new RefDto("feature", "head"), new RefDto("main", "base"), false);
+
+        GithubAccount account = GithubAccount.builder().loginId(ownerLogin).build();
+        PullRequest existingPr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repoName)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.IN_PROGRESS)
+                .headSha("head")
+                .baseSha("base")
+                .build();
+
+        when(dto.getAction()).thenReturn("closed");
+        when(dto.getRepository()).thenReturn(repoDto);
+        when(dto.getPullRequest()).thenReturn(prDto);
+        when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(existingPr));
+
+        // when
+        pullRequestService.processAndSaveWebhook(payload, signature);
+
+        // then
+        assertEquals(PullRequest.PullRequestState.CLOSED, existingPr.getPrState());
+        assertEquals(PullRequest.ReviewStatus.STALE, existingPr.getStatus());
+        verify(pullRequestRepository).save(existingPr);
+    }
+
+    @Test
+    void updateAiReview_ClosedPr_DoesNotCompleteOrNotify() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+
+        GithubAccount account = GithubAccount.builder().loginId("user").build();
+        account.initializeAiSettings();
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+        pr.updatePullRequestSnapshot("closed", PullRequest.PullRequestState.CLOSED, "head", "base");
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+
+        // when
+        pullRequestService.updateAiReview(repoId, prNumber, "late result", PullRequest.ReviewStatus.COMPLETED,
+                "head");
+
+        // then
+        assertEquals(PullRequest.ReviewStatus.STALE, pr.getStatus());
+        verify(notificationService, never()).createNotification(
+                any(GithubAccount.class),
+                any(NotificationType.class),
+                any(PullRequest.class));
+    }
+
+    @Test
+    void review_ClosedPr_DoesNotPublishReviewEvent() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        String owner = "user";
+        String repo = "repo";
+        String accessToken = "token";
+
+        GithubAccount account = GithubAccount.builder().loginId(owner).build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateOpenAiKey("encrypted-key");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName(repo)
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("closed")
+                .status(PullRequest.ReviewStatus.PENDING)
+                .headSha("head")
+                .baseSha("base")
+                .build();
+        pr.updatePullRequestSnapshot("closed", PullRequest.PullRequestState.CLOSED, "head", "base");
+
+        PullRequestInfoDto prInfo = new PullRequestInfoDto();
+        PullRequestInfoDto.PullRequestRefDto head = new PullRequestInfoDto.PullRequestRefDto();
+        head.setSha("head");
+        PullRequestInfoDto.PullRequestRefDto base = new PullRequestInfoDto.PullRequestRefDto();
+        base.setSha("base");
+        prInfo.setHead(head);
+        prInfo.setBase(base);
+        prInfo.setState("closed");
+
+        when(githubService.getRepositoryId(accessToken, owner, repo)).thenReturn(repoId);
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(githubService.getPullRequestInfo(accessToken, owner, repo, prNumber)).thenReturn(prInfo);
+
+        // when
+        pullRequestService.review(owner, repo, prNumber, accessToken, "gpt-4o-mini");
+
+        // then
+        verify(githubService, never()).getChangedFiles(anyString(), anyString(), anyString(), anyInt());
+        verify(eventPublisher, never()).publishEvent(any());
+        assertEquals(PullRequest.PullRequestState.CLOSED, pr.getPrState());
+    }
+
+    @Test
     void review_DuplicateInProgressForSameHead_DoesNotPublishNewReviewEvent() {
         // given
         Long repoId = 1L;

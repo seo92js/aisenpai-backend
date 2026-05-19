@@ -162,7 +162,7 @@ public class PullRequest {
         this.title = title;
         this.action = action;
         this.status = status;
-        this.prState = prState;
+        this.prState = prState != null ? prState : PullRequestState.OPEN;
         this.headSha = headSha;
         this.baseSha = baseSha;
         this.aiReview = null;
