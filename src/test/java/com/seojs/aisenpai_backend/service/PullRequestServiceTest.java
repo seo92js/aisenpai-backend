@@ -21,6 +21,7 @@ import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
+import com.seojs.aisenpai_backend.pullrequest.service.ReviewFindingValidationService;
 import com.seojs.aisenpai_backend.pullrequest.service.ReviewContextService;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
 import com.seojs.aisenpai_backend.notification.service.NotificationService;
@@ -63,19 +64,18 @@ class PullRequestServiceTest {
     private NotificationService notificationService;
 
     @Mock
-    private ReviewAnchorService reviewAnchorService;
-
-    @Mock
     private ReviewContextService reviewContextService;
 
     private PullRequestService pullRequestService;
+    private ReviewFindingValidationService reviewFindingValidationService;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        reviewFindingValidationService = new ReviewFindingValidationService(new ReviewAnchorService());
         pullRequestService = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, objectMapper, eventPublisher, tokenEncryptionService,
-                notificationService, reviewAnchorService, reviewContextService);
+                notificationService, reviewContextService, reviewFindingValidationService);
     }
 
     @Test
@@ -464,7 +464,8 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
-                notificationService, new ReviewAnchorService(), reviewContextService);
+                notificationService, reviewContextService,
+                new ReviewFindingValidationService(new ReviewAnchorService()));
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -536,7 +537,8 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
-                notificationService, new ReviewAnchorService(), reviewContextService);
+                notificationService, reviewContextService,
+                new ReviewFindingValidationService(new ReviewAnchorService()));
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -601,13 +603,46 @@ class PullRequestServiceTest {
     }
 
     @Test
+    void updateAiReview_AutoPost_ParseFailure_DoesNotPostUnverifiedRawReview() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+
+        GithubAccount account = GithubAccount.builder()
+                .loginId("user")
+                .accessToken("encrypted-token")
+                .build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+
+        // when
+        pullRequestService.updateAiReview(repoId, prNumber, "not-json", PullRequest.ReviewStatus.COMPLETED, "head");
+
+        // then
+        verify(githubService, never()).postPRReview(anyString(), anyString(), anyString(), anyInt(), any());
+        verify(githubService, never()).postPRComment(anyString(), anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
     void updateAiReview_AutoPostDisabled_StoresEnrichedReviewForDisplay() {
         // given
         Long repoId = 1L;
         Integer prNumber = 1;
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
-                notificationService, new ReviewAnchorService(), reviewContextService);
+                notificationService, reviewContextService,
+                new ReviewFindingValidationService(new ReviewAnchorService()));
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
