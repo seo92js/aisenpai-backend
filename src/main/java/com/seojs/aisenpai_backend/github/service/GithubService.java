@@ -6,7 +6,6 @@ import com.seojs.aisenpai_backend.exception.GithubRateLimitEx;
 import com.seojs.aisenpai_backend.exception.GithubAccountNotFoundEx;
 import com.seojs.aisenpai_backend.exception.WebhookRegistrationEx;
 import com.seojs.aisenpai_backend.github.dto.*;
-import com.seojs.aisenpai_backend.github.entity.AiReviewSettings;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.repository.GithubAccountRepository;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
@@ -44,6 +43,7 @@ public class GithubService {
     private final TokenEncryptionService tokenEncryptionService;
     private final PullRequestRepository pullRequestRepository;
     private final AiService aiService;
+    private final RepositoryAiSettingsService repositoryAiSettingsService;
     @Qualifier("githubApiExecutor")
     private final Executor githubApiExecutor;
 
@@ -56,7 +56,14 @@ public class GithubService {
     public List<GitRepositoryResponseDto> getRepositories(String accessToken) {
         return webClientBuilder.build()
                 .get()
-                .uri("https://api.github.com/user/repos")
+                .uri(uriBuilder -> uriBuilder
+                        .scheme("https")
+                        .host("api.github.com")
+                        .path("/user/repos")
+                        .queryParam("per_page", GITHUB_PAGE_SIZE)
+                        .queryParam("sort", "updated")
+                        .queryParam("direction", "desc")
+                        .build())
                 .header("Authorization", "Bearer " + accessToken)
                 .retrieve()
                 .bodyToFlux(GitRepositoryResponseDto.class)
@@ -68,16 +75,19 @@ public class GithubService {
      * 특정 저장소의 ID를 GitHub API로 조회
      */
     public Long getRepositoryId(String accessToken, String owner, String repo) {
+        GitRepositoryResponseDto repository = getRepository(accessToken, owner, repo);
+        return repository != null ? repository.getId() : null;
+    }
+
+    public GitRepositoryResponseDto getRepository(String accessToken, String owner, String repo) {
         try {
-            GitRepositoryResponseDto repository = webClientBuilder.build()
+            return webClientBuilder.build()
                     .get()
                     .uri("https://api.github.com/repos/{owner}/{repo}", owner, repo)
                     .header("Authorization", "Bearer " + accessToken)
                     .retrieve()
                     .bodyToMono(GitRepositoryResponseDto.class)
                     .block();
-
-            return repository != null ? repository.getId() : null;
         } catch (Exception e) {
             throw new GitHubApiEx("Failed to get repository: " + owner + "/" + repo, e);
         }
@@ -167,94 +177,6 @@ public class GithubService {
     public GithubAccount findByLoginIdOrThrow(String loginId) {
         return githubAccountRepository.findByLoginId(loginId)
                 .orElseThrow(() -> new GithubAccountNotFoundEx("GithubAccount not found for loginId: " + loginId));
-    }
-
-    /**
-     * 리뷰 설정 조회
-     */
-    @Transactional(readOnly = true)
-    public ReviewSettingsDto getReviewSettings(String loginId) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        AiReviewSettings settings = account.getAiSettings();
-        return new ReviewSettingsDto(
-                settings.getReviewTone(),
-                settings.getReviewFocus(),
-                settings.getDetailLevel(),
-                settings.getAutoReviewEnabled(),
-                settings.getAutoPostToGithub(),
-                settings.getOpenaiModel());
-    }
-
-    /**
-     * 무시 패턴 조회
-     */
-    @Transactional(readOnly = true)
-    public List<String> getIgnorePatterns(String loginId) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        return account.getAiSettings().getIgnorePatternsAsList();
-    }
-
-    /**
-     * openai api key 조회
-     */
-    @Transactional(readOnly = true)
-    public String getOpenAiKey(String loginId) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        String encryptedKey = account.getAiSettings().getOpenAiKey();
-        if (encryptedKey == null || encryptedKey.isBlank()) {
-            return null;
-        }
-        return tokenEncryptionService.decryptToken(encryptedKey);
-    }
-
-    /**
-     * 마스킹된 OpenAI Key 반환 (API 응답용)
-     */
-    @Transactional(readOnly = true)
-    public String getMaskedOpenAiKey(String loginId) {
-        String decryptedKey = getOpenAiKey(loginId);
-        if (decryptedKey == null || decryptedKey.length() < 10) {
-            return null;
-        }
-        return decryptedKey.substring(0, 10) + "...****";
-    }
-
-    /**
-     * 리뷰 설정 업데이트
-     */
-    @Transactional
-    public Long updateReviewSettings(String loginId, ReviewSettingsDto dto) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        account.getAiSettings().updateReviewSettings(dto.getTone(), dto.getFocus(), dto.getDetailLevel(),
-                dto.getAutoReviewEnabled(), dto.getAutoPostToGithub(),
-                dto.getOpenaiModel());
-        return account.getId();
-    }
-
-    /**
-     * 무시 패턴 업데이트
-     */
-    @Transactional
-    public Long updateIgnorePatterns(String loginId, List<String> patterns) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        String patternsString = patterns == null ? "" : String.join(",", patterns);
-        account.getAiSettings().updateIgnorePatterns(patternsString);
-        return account.getId();
-    }
-
-    /**
-     * openai api key 업데이트
-     */
-    @Transactional
-    public Long updateOpenAiKey(String loginId, String openAiKey) {
-        GithubAccount account = findByLoginIdOrThrow(loginId);
-        if (openAiKey == null || openAiKey.isBlank()) {
-            account.getAiSettings().updateOpenAiKey(null);
-        } else {
-            String encryptedKey = tokenEncryptionService.encryptToken(openAiKey);
-            account.getAiSettings().updateOpenAiKey(encryptedKey);
-        }
-        return account.getId();
     }
 
     /**
@@ -462,8 +384,12 @@ public class GithubService {
     /**
      * 웹훅 등록 (기존 웹훅이 있다면 삭제 후 재등록)
      */
-    public void registerWebhook(String accessToken, String owner, String repository) {
-        GithubAccount account = findByLoginIdOrThrow(owner);
+    public void registerWebhook(String accessToken, String requesterLogin, String owner, String repository) {
+        GithubAccount account = findByLoginIdOrThrow(requesterLogin);
+        GitRepositoryResponseDto repositoryInfo = getRepository(accessToken, owner, repository);
+        if (repositoryInfo == null || !repositoryInfo.hasAdminPermission()) {
+            throw new SecurityException("Repository admin permission is required to register webhook.");
+        }
 
         // 기존 웹훅 삭제 (중복 방지 및 시크릿 갱신)
         deleteExistingWebhook(accessToken, owner, repository);
@@ -481,6 +407,7 @@ public class GithubService {
                     .toBodilessEntity()
                     .block();
 
+            repositoryAiSettingsService.registerWebhookSettings(repositoryInfo.getId(), owner, repository, account);
             log.info("Webhook registered for {}/{}", owner, repository);
         } catch (Exception e) {
             throw new WebhookRegistrationEx("Error occurred during webhook registration", e);

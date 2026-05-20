@@ -46,7 +46,6 @@ public class CustomOAuth2UserService extends DefaultOAuth2UserService {
                                         .webhookSecret(webhookSecret)
                                         .build();
                                 githubAccountRepository.save(newAccount);
-                                newAccount.initializeAiSettings();
                                 log.info("New user registered: {}", loginId);
                             });
 

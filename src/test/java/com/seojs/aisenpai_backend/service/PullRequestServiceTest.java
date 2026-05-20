@@ -12,8 +12,10 @@ import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.RepositoryDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto.UserDto;
 import com.seojs.aisenpai_backend.github.dto.PullRequestInfoDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
+import com.seojs.aisenpai_backend.github.entity.RepositoryAiSettings;
 import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
+import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.dto.PullRequestResponseDto;
@@ -66,6 +68,9 @@ class PullRequestServiceTest {
     @Mock
     private ReviewContextService reviewContextService;
 
+    @Mock
+    private RepositoryAiSettingsService repositoryAiSettingsService;
+
     private PullRequestService pullRequestService;
     private ReviewFindingValidationService reviewFindingValidationService;
 
@@ -75,7 +80,20 @@ class PullRequestServiceTest {
         reviewFindingValidationService = new ReviewFindingValidationService(new ReviewAnchorService());
         pullRequestService = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, objectMapper, eventPublisher, tokenEncryptionService,
-                notificationService, reviewContextService, reviewFindingValidationService);
+                notificationService, reviewContextService, reviewFindingValidationService,
+                repositoryAiSettingsService);
+    }
+
+    private RepositoryAiSettings repositorySettings(Long repositoryId, String owner, String repo,
+            GithubAccount postingAccount) {
+        return RepositoryAiSettings.builder()
+                .repositoryId(repositoryId)
+                .owner(owner)
+                .repositoryName(repo)
+                .webhookSecret("secret")
+                .webhookRegisteredBy(postingAccount)
+                .postingAccount(postingAccount)
+                .build();
     }
 
     @Test
@@ -174,8 +192,8 @@ class PullRequestServiceTest {
                 .thenReturn(Optional.empty());
 
         GithubAccount account = GithubAccount.builder().loginId(ownerLogin).build();
-        account.initializeAiSettings();
-        when(githubService.findByLoginIdOrThrow(ownerLogin)).thenReturn(account);
+        RepositoryAiSettings settings = repositorySettings(repoId, ownerLogin, repoName, account);
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
 
         // when
         pullRequestService.processAndSaveWebhook(payload, signature);
@@ -196,7 +214,8 @@ class PullRequestServiceTest {
         String aiReview = "Good job";
 
         GithubAccount account = GithubAccount.builder().loginId("user").build();
-        account.initializeAiSettings();
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, "user", "repo", account));
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
                 .prNumber(prNumber)
@@ -228,7 +247,8 @@ class PullRequestServiceTest {
         String staleReview = "Review for old commit";
 
         GithubAccount account = GithubAccount.builder().loginId("user").build();
-        account.initializeAiSettings();
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, "user", "repo", account));
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
                 .prNumber(prNumber)
@@ -260,7 +280,8 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
 
         GithubAccount account = GithubAccount.builder().loginId("user").build();
-        account.initializeAiSettings();
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, "user", "repo", account));
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
                 .prNumber(prNumber)
@@ -322,6 +343,10 @@ class PullRequestServiceTest {
         when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(existingPr));
+        when(repositoryAiSettingsService.getOrCreatePlaceholder(repoId, ownerLogin, repoName))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
 
         // when
         pullRequestService.processAndSaveWebhook(payload, signature);
@@ -369,6 +394,10 @@ class PullRequestServiceTest {
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(existingPr));
         when(githubService.findAccessTokenByLoginId(ownerLogin)).thenReturn("access-token");
+        when(repositoryAiSettingsService.getOrCreatePlaceholder(repoId, ownerLogin, repoName))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
 
         // when
         pullRequestService.processAndSaveWebhook(payload, signature);
@@ -415,6 +444,10 @@ class PullRequestServiceTest {
         when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(existingPr));
+        when(repositoryAiSettingsService.getOrCreatePlaceholder(repoId, ownerLogin, repoName))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
 
         // when
         pullRequestService.processAndSaveWebhook(payload, signature);
@@ -432,7 +465,6 @@ class PullRequestServiceTest {
         Integer prNumber = 1;
 
         GithubAccount account = GithubAccount.builder().loginId("user").build();
-        account.initializeAiSettings();
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
                 .prNumber(prNumber)
@@ -465,14 +497,14 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()));
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
                 .accessToken("encrypted-token")
                 .build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+        RepositoryAiSettings settings = repositorySettings(repoId, "user", "repo", account);
+        settings.updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -511,6 +543,7 @@ class PullRequestServiceTest {
 
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
         when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
         when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
                 .thenReturn(List.of(changedFile));
@@ -538,14 +571,14 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()));
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
                 .accessToken("encrypted-token")
                 .build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+        RepositoryAiSettings settings = repositorySettings(repoId, "user", "repo", account);
+        settings.updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -584,6 +617,7 @@ class PullRequestServiceTest {
 
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
         when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
         when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
                 .thenReturn(List.of(changedFile));
@@ -612,8 +646,8 @@ class PullRequestServiceTest {
                 .loginId("user")
                 .accessToken("encrypted-token")
                 .build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+        RepositoryAiSettings settings = repositorySettings(repoId, "user", "repo", account);
+        settings.updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -625,6 +659,7 @@ class PullRequestServiceTest {
 
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
 
         // when
         pullRequestService.updateAiReview(repoId, prNumber, "not-json", PullRequest.ReviewStatus.COMPLETED, "head");
@@ -642,13 +677,13 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()));
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
                 .accessToken("encrypted-token")
                 .build();
-        account.initializeAiSettings();
+        RepositoryAiSettings settings = repositorySettings(repoId, "user", "repo", account);
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -682,6 +717,7 @@ class PullRequestServiceTest {
 
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
         when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
         when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
                 .thenReturn(List.of(changedFile));
@@ -705,8 +741,6 @@ class PullRequestServiceTest {
         String accessToken = "token";
 
         GithubAccount account = GithubAccount.builder().loginId(owner).build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateOpenAiKey("encrypted-key");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -754,8 +788,6 @@ class PullRequestServiceTest {
         String headSha = "head-1";
 
         GithubAccount account = GithubAccount.builder().loginId(owner).build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateOpenAiKey("encrypted-key");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -802,8 +834,8 @@ class PullRequestServiceTest {
         String accessToken = "token";
 
         GithubAccount account = GithubAccount.builder().loginId(owner).build();
-        account.initializeAiSettings();
-        account.getAiSettings().updateOpenAiKey("encrypted-key");
+        RepositoryAiSettings settings = repositorySettings(repoId, owner, repo, account);
+        settings.updateOpenAiKey("encrypted-key");
 
         PullRequest pr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -843,6 +875,7 @@ class PullRequestServiceTest {
                 .thenReturn(Optional.of(pr));
         when(githubService.getPullRequestInfo(accessToken, owner, repo, prNumber)).thenReturn(prInfo);
         when(githubService.getChangedFiles(accessToken, owner, repo, prNumber)).thenReturn(List.of(changedFile));
+        when(repositoryAiSettingsService.getConfiguredForReview(repoId)).thenReturn(settings);
         when(githubService.getRepositoryTree(accessToken, owner, repo, "base", true)).thenReturn(treeDto);
         when(reviewContextService.buildReviewContext(eq(accessToken), eq(owner), eq(repo), eq(prNumber), eq(prInfo),
                 eq(List.of(changedFile)), eq(treeDto), anyList())).thenReturn(reviewContext);

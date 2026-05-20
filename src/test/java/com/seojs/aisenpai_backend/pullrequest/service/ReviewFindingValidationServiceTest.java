@@ -51,19 +51,19 @@ class ReviewFindingValidationServiceTest {
                 .targetFilePattern("**/*.java")
                 .build();
         AiReviewResponseDto response = AiReviewResponseDto.builder()
-                .generalReview("AiReviewSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
+                .generalReview("RepositoryAiSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
                 .comments(List.of())
                 .build();
         String patch = """
                 @@ -130,6 +130,7 @@
-                 class AiReviewSettings {
+                 class RepositoryAiSettings {
                 +    public String buildSystemPrompt() { return ""; }
                  }
                 """;
 
         // when
         var result = service.validate(response,
-                List.of(changedFile("src/main/java/AiReviewSettings.java", patch)), List.of(rule));
+                List.of(changedFile("src/main/java/RepositoryAiSettings.java", patch)), List.of(rule));
 
         // then
         assertEquals("검토 결과, 이번 변경에서 추가로 지적할 diff 라인 기준 코멘트는 없습니다.",
@@ -146,7 +146,7 @@ class ReviewFindingValidationServiceTest {
                 .targetFilePattern("**/*.java")
                 .build();
         AiReviewResponseDto response = AiReviewResponseDto.builder()
-                .generalReview("AiReviewSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
+                .generalReview("RepositoryAiSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
                 .comments(List.of(comment("src/App.java", "private final String name;", "생성자 검증이 필요합니다.")))
                 .build();
         String patch = """

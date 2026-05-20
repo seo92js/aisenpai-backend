@@ -13,8 +13,10 @@ import com.seojs.aisenpai_backend.github.dto.PullRequestInfoDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
+import com.seojs.aisenpai_backend.github.entity.RepositoryAiSettings;
 import com.seojs.aisenpai_backend.github.entity.Rule;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
@@ -52,6 +54,7 @@ public class PullRequestService {
     private final NotificationService notificationService;
     private final ReviewContextService reviewContextService;
     private final ReviewFindingValidationService reviewFindingValidationService;
+    private final RepositoryAiSettingsService repositoryAiSettingsService;
 
     private record ReviewProcessingResult(
             String accessToken,
@@ -151,14 +154,17 @@ public class PullRequestService {
 
         List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken, owner, repo, prNumber);
 
-        GithubAccount githubAccount = pr.getGithubAccount();
-
-        if (githubAccount.getAiSettings().getOpenAiKey() == null
-                || githubAccount.getAiSettings().getOpenAiKey().isEmpty()) {
-            throw new OpenAiKeyNotSetEx("OpenAI API key is not set. Please set it in the settings.");
+        RepositoryAiSettings settings = repositoryAiSettingsService.getConfiguredForReview(repositoryId);
+        String reviewModel = hasText(model) ? model : settings.getOpenaiModel();
+        if (!owner.equals(settings.getOwner()) || !repo.equals(settings.getRepositoryName())) {
+            settings.updateRepository(owner, repo);
         }
 
-        List<String> ignorePatterns = githubAccount.getAiSettings().getIgnorePatternsAsList();
+        if (settings.getOpenAiKey() == null || settings.getOpenAiKey().isEmpty()) {
+            throw new OpenAiKeyNotSetEx("OpenAI API key is not set for this repository.");
+        }
+
+        List<String> ignorePatterns = settings.getIgnorePatternsAsList();
         List<ChangedFileDto> filteredFiles = changedFiles;
 
         if (!ignorePatterns.isEmpty()) {
@@ -176,8 +182,8 @@ public class PullRequestService {
         pr.markReviewStarted(currentHeadSha);
 
         // LLM 호출은 이벤트 리스너에서 수행
-        String systemPrompt = githubAccount.getAiSettings().buildSystemPrompt();
-        String encryptedOpenAiKey = githubAccount.getAiSettings().getOpenAiKey();
+        String systemPrompt = settings.buildSystemPrompt();
+        String encryptedOpenAiKey = settings.getOpenAiKey();
 
         GitTreeResponseDto treeDto = null;
         try {
@@ -200,7 +206,7 @@ public class PullRequestService {
         ReviewContextDto.BudgetDto budget = reviewContext.getBudget();
         log.info("Review request context prepared. repositoryId={}, pr={}, model={}, detailLevel={}, changedFiles={}, "
                         + "relatedFiles={}, usedContentChars={}, usedContextChars={}",
-                repositoryId, prNumber, model, githubAccount.getAiSettings().getDetailLevel(),
+                repositoryId, prNumber, reviewModel, settings.getDetailLevel(),
                 reviewContext.getChangedFiles() != null ? reviewContext.getChangedFiles().size() : 0,
                 reviewContext.getRelatedFiles() != null ? reviewContext.getRelatedFiles().size() : 0,
                 budget != null ? budget.getUsedContentChars() : 0,
@@ -210,7 +216,7 @@ public class PullRequestService {
                 : null;
 
         eventPublisher.publishEvent(
-                new ReviewRequestDto(repositoryId, prNumber, filteredFiles, model, systemPrompt, encryptedOpenAiKey,
+                new ReviewRequestDto(repositoryId, prNumber, filteredFiles, reviewModel, systemPrompt, encryptedOpenAiKey,
                         repositoryTreeString, currentHeadSha, reviewContext));
     }
 
@@ -257,10 +263,11 @@ public class PullRequestService {
             pr.updateStatus(status);
         }
 
-        GithubAccount account = pr.getGithubAccount();
+        RepositoryAiSettings settings = repositoryAiSettingsService.getRequired(repositoryId);
+        GithubAccount account = settings.getPostingAccount() != null ? settings.getPostingAccount() : pr.getGithubAccount();
 
         if (status == ReviewStatus.COMPLETED) {
-            ReviewProcessingResult reviewProcessingResult = prepareReviewForDisplay(account, pr, aiReview);
+            ReviewProcessingResult reviewProcessingResult = prepareReviewForDisplay(settings, pr, aiReview);
 
             notificationService.createNotification(
                     account,
@@ -268,8 +275,8 @@ public class PullRequestService {
                     pr);
 
             // GitHub PR에 댓글 자동 게시
-            if (Boolean.TRUE.equals(account.getAiSettings().getAutoPostToGithub())) {
-                processAndPostReview(account, pr, aiReview, reviewProcessingResult);
+            if (Boolean.TRUE.equals(settings.getAutoPostToGithub())) {
+                processAndPostReview(settings, pr, aiReview, reviewProcessingResult);
             }
         } else if (status == ReviewStatus.FAILED) {
             notificationService.createNotification(
@@ -279,15 +286,21 @@ public class PullRequestService {
         }
     }
 
-    private ReviewProcessingResult prepareReviewForDisplay(GithubAccount account, PullRequest pr, String aiReview) {
+    private ReviewProcessingResult prepareReviewForDisplay(RepositoryAiSettings settings, PullRequest pr, String aiReview) {
         try {
             String sanitizedAiReview = sanitizeAiReview(aiReview);
             AiReviewResponseDto aiResponse = objectMapper.readValue(sanitizedAiReview, AiReviewResponseDto.class);
-            String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
+            GithubAccount postingAccount = settings.getPostingAccount();
+            if (postingAccount == null) {
+                log.warn("Repository settings for {}/{} have no posting account", settings.getOwner(),
+                        settings.getRepositoryName());
+                return null;
+            }
+            String accessToken = tokenEncryptionService.decryptToken(postingAccount.getAccessToken());
             List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken,
-                    account.getLoginId(), pr.getRepositoryName(), pr.getPrNumber());
+                    settings.getOwner(), pr.getRepositoryName(), pr.getPrNumber());
             ReviewFindingValidationService.ValidationResult validationResult = reviewFindingValidationService.validate(
-                    aiResponse, changedFiles, activeRules(account));
+                    aiResponse, changedFiles, activeRules(settings));
             saveEnrichedReviewToDb(pr, validationResult.aiResponse());
             return new ReviewProcessingResult(accessToken, validationResult.aiResponse(),
                     validationResult.anchoredComments());
@@ -300,7 +313,7 @@ public class PullRequestService {
     /**
      * AI 리뷰를 처리하고 GitHub에 게시 (파싱 및 분기 처리)
      */
-    private void processAndPostReview(GithubAccount account, PullRequest pr, String aiReview,
+    private void processAndPostReview(RepositoryAiSettings settings, PullRequest pr, String aiReview,
             ReviewProcessingResult reviewProcessingResult) {
         try {
             if (reviewProcessingResult == null) {
@@ -310,10 +323,10 @@ public class PullRequestService {
             }
 
             if (!reviewProcessingResult.enrichedComments().isEmpty()) {
-                postCommentsToGitHub(reviewProcessingResult.accessToken(), account, pr,
+                postCommentsToGitHub(reviewProcessingResult.accessToken(), settings, pr,
                         reviewProcessingResult.aiResponse(), reviewProcessingResult.enrichedComments());
             } else {
-                postGeneralComment(reviewProcessingResult.accessToken(), account, pr,
+                postGeneralComment(reviewProcessingResult.accessToken(), settings, pr,
                         defaultGeneralReview(reviewProcessingResult.aiResponse().getGeneralReview()));
             }
         } catch (Exception e) {
@@ -328,13 +341,8 @@ public class PullRequestService {
                 && hasText(comment.getBody());
     }
 
-    private List<Rule> activeRules(GithubAccount account) {
-        if (account.getAiSettings() == null || account.getAiSettings().getRules() == null) {
-            return List.of();
-        }
-        return account.getAiSettings().getRules().stream()
-                .filter(Rule::isEnabled)
-                .toList();
+    private List<Rule> activeRules(RepositoryAiSettings settings) {
+        return settings.getActiveRules();
     }
 
     private void saveEnrichedReviewToDb(PullRequest pr, AiReviewResponseDto validatedResponse) throws Exception {
@@ -342,7 +350,7 @@ public class PullRequestService {
         pr.updateAiReview(updatedJson);
     }
 
-    private void postCommentsToGitHub(String accessToken, GithubAccount account, PullRequest pr,
+    private void postCommentsToGitHub(String accessToken, RepositoryAiSettings settings, PullRequest pr,
             AiReviewResponseDto aiResponse, List<ReviewCommentDto> enrichedComments) {
         List<GithubApiCommentDto> commentsToPost = enrichedComments.stream()
                 .filter(c -> c.getLine() != null && isValidReviewComment(c))
@@ -365,7 +373,7 @@ public class PullRequestService {
                     .build();
 
             try {
-                githubService.postPRReview(accessToken, account.getLoginId(), pr.getRepositoryName(),
+                githubService.postPRReview(accessToken, settings.getOwner(), pr.getRepositoryName(),
                         pr.getPrNumber(), reviewRequest);
             } catch (Exception e) {
                 log.warn("Failed to post inline review: {}", e.getMessage());
@@ -391,9 +399,9 @@ public class PullRequestService {
                     : "")
                     + "### 추가 코멘트\n"
                     + manualFallback;
-            postGeneralComment(accessToken, account, pr, fallbackBody);
+            postGeneralComment(accessToken, settings, pr, fallbackBody);
         } else if (commentsToPost.isEmpty()) {
-            postGeneralComment(accessToken, account, pr, defaultGeneralReview(aiResponse.getGeneralReview()));
+            postGeneralComment(accessToken, settings, pr, defaultGeneralReview(aiResponse.getGeneralReview()));
         }
     }
 
@@ -431,9 +439,9 @@ public class PullRequestService {
     /**
      * 일반 코멘트 게시
      */
-    private void postGeneralComment(String accessToken, GithubAccount account, PullRequest pr, String body) {
+    private void postGeneralComment(String accessToken, RepositoryAiSettings settings, PullRequest pr, String body) {
         String formattedReview = formatReviewForGithub(body);
-        githubService.postPRComment(accessToken, account.getLoginId(), pr.getRepositoryName(), pr.getPrNumber(),
+        githubService.postPRComment(accessToken, settings.getOwner(), pr.getRepositoryName(), pr.getPrNumber(),
                 formattedReview);
     }
 
@@ -515,7 +523,7 @@ public class PullRequestService {
     private void savePullRequest(WebhookPayloadDto webhookPayload) {
         Long repoId = webhookPayload.getRepository().getId();
         String repoName = webhookPayload.getRepository().getName();
-        String loginId = webhookPayload.getRepository().getOwner().getLogin();
+        String owner = webhookPayload.getRepository().getOwner().getLogin();
         Integer prNumber = webhookPayload.getPullRequest().getNumber();
         String action = webhookPayload.getAction();
         String title = webhookPayload.getPullRequest().getTitle();
@@ -530,10 +538,13 @@ public class PullRequestService {
         if (existingPr != null) {
             updateExistingPullRequest(existingPr, action, prState, headSha, baseSha);
         } else {
-            createNewPullRequest(repoId, repoName, loginId, prNumber, action, title, prState, headSha, baseSha);
+            createNewPullRequest(repoId, repoName, owner, prNumber, action, title, prState, headSha, baseSha);
         }
 
-        evictRepositoryCache(loginId);
+        repositoryAiSettingsService.getOrCreatePlaceholder(repoId, owner, repoName);
+        repositoryAiSettingsService.getRequired(repoId).getPostingAccount();
+        String cacheLogin = repositoryAiSettingsService.getRequired(repoId).getPostingAccountLogin();
+        evictRepositoryCache(cacheLogin != null ? cacheLogin : owner);
     }
 
     private void evictRepositoryCache(String loginId) {
@@ -610,7 +621,11 @@ public class PullRequestService {
      */
     private void createNewPullRequest(Long repoId, String repoName, String loginId, Integer prNumber, String action,
             String title, PullRequestState prState, String headSha, String baseSha) {
-        GithubAccount githubAccount = githubService.findByLoginIdOrThrow(loginId);
+        RepositoryAiSettings settings = repositoryAiSettingsService.getRequired(repoId);
+        GithubAccount githubAccount = settings.getPostingAccount();
+        if (githubAccount == null) {
+            throw new WebhookProcessingEx("Repository posting account is not configured");
+        }
 
         PullRequest newPr = PullRequest.builder()
                 .repositoryId(repoId)
@@ -632,14 +647,15 @@ public class PullRequestService {
                 NotificationType.NEW_PR,
                 newPr);
 
-        if (Boolean.TRUE.equals(githubAccount.getAiSettings().getAutoReviewEnabled())) {
+        if (Boolean.TRUE.equals(settings.getAutoReviewEnabled())) {
             try {
                 String accessToken = tokenEncryptionService.decryptToken(githubAccount.getAccessToken());
-                String model = githubAccount.getAiSettings().getOpenaiModel();
-                review(loginId, repoName, prNumber, accessToken, model);
-                log.info("Auto review triggered for PR #{} in {}/{}", prNumber, loginId, repoName);
+                String model = settings.getOpenaiModel();
+                review(settings.getOwner(), repoName, prNumber, accessToken, model);
+                log.info("Auto review triggered for PR #{} in {}/{}", prNumber, settings.getOwner(), repoName);
             } catch (Exception e) {
-                log.warn("Auto review failed for PR #{} in {}/{}: {}", prNumber, loginId, repoName, e.getMessage());
+                log.warn("Auto review failed for PR #{} in {}/{}: {}", prNumber, settings.getOwner(), repoName,
+                        e.getMessage());
             }
         }
     }
