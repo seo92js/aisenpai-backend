@@ -197,6 +197,14 @@ public class PullRequestService {
 
         ReviewContextDto reviewContext = reviewContextService.buildReviewContext(accessToken, owner, repo, prNumber,
                 prInfo, filteredFiles, treeDto, ignorePatterns);
+        ReviewContextDto.BudgetDto budget = reviewContext.getBudget();
+        log.info("Review request context prepared. repositoryId={}, pr={}, model={}, detailLevel={}, changedFiles={}, "
+                        + "relatedFiles={}, usedContentChars={}, usedContextChars={}",
+                repositoryId, prNumber, model, githubAccount.getAiSettings().getDetailLevel(),
+                reviewContext.getChangedFiles() != null ? reviewContext.getChangedFiles().size() : 0,
+                reviewContext.getRelatedFiles() != null ? reviewContext.getRelatedFiles().size() : 0,
+                budget != null ? budget.getUsedContentChars() : 0,
+                budget != null ? budget.getUsedContextChars() : 0);
         String repositoryTreeString = reviewContext.getRepositoryTree() != null
                 ? reviewContext.getRepositoryTree().getSummary()
                 : null;

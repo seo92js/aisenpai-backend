@@ -2,6 +2,8 @@ package com.seojs.aisenpai_backend.service;
 
 import com.seojs.aisenpai_backend.ai.service.AiService;
 import com.seojs.aisenpai_backend.exception.GithubAccountNotFoundEx;
+import com.seojs.aisenpai_backend.exception.GithubRateLimitEx;
+import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
 import com.seojs.aisenpai_backend.github.dto.GithubContentResponseDto;
 import com.seojs.aisenpai_backend.github.dto.GitRepositoryResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewSettingsDto;
@@ -290,6 +292,40 @@ class GithubServiceTest {
     }
 
     @Test
+    void getChangedFiles_FetchesAllPages() {
+        // given
+        ChangedFileDto[] firstPage = new ChangedFileDto[100];
+        for (int i = 0; i < firstPage.length; i++) {
+            firstPage[i] = changedFile("src/File" + i + ".java");
+        }
+        ChangedFileDto[] secondPage = new ChangedFileDto[] {
+                changedFile("src/File100.java"),
+                changedFile("src/File101.java")
+        };
+        when(responseSpec.bodyToMono(ChangedFileDto[].class))
+                .thenReturn(Mono.just(firstPage))
+                .thenReturn(Mono.just(secondPage));
+
+        // when
+        List<ChangedFileDto> result = githubService.getChangedFiles("token", "owner", "repo", 1);
+
+        // then
+        assertEquals(102, result.size());
+        verify(requestHeadersUriSpec, times(2)).uri(any(Function.class));
+    }
+
+    @Test
+    void getChangedFiles_RethrowsRateLimit() {
+        // given
+        when(responseSpec.bodyToMono(ChangedFileDto[].class))
+                .thenReturn(Mono.error(new GithubRateLimitEx("GitHub API rate limit exceeded.")));
+
+        // when & then
+        assertThrows(GithubRateLimitEx.class,
+                () -> githubService.getChangedFiles("token", "owner", "repo", 1));
+    }
+
+    @Test
     void getReviewSettings_성공() {
         // given
         String loginId = "test-user";
@@ -312,6 +348,11 @@ class GithubServiceTest {
         assertEquals(DetailLevel.STANDARD, result.getDetailLevel());
 
         verify(githubAccountRepository).findByLoginId(loginId);
+    }
+
+    private ChangedFileDto changedFile(String filename) {
+        return new ChangedFileDto(filename, "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents",
+                "@@ -1 +1 @@\n+line");
     }
 
     @Test

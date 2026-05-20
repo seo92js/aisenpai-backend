@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.web.client.ResourceAccessException;
 
 import java.util.List;
 
@@ -72,5 +73,23 @@ class PullRequestReviewListenerTest {
         assertTrue(promptCaptor.getValue().contains("\"changedFiles\""));
         assertFalse(promptCaptor.getValue().contains("\"repositoryTree\":\"tree\""));
         verify(pullRequestService).updateAiReview(1L, 1, "{}", PullRequest.ReviewStatus.COMPLETED, "head");
+    }
+
+    @Test
+    void handleReviewRequested_StoresClassifiedFailureMessage() {
+        // given
+        ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(), "gpt-4o-mini",
+                "system", "encrypted-key", "tree", "head", null);
+        when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
+        when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
+                .thenThrow(new ResourceAccessException("Read timed out"));
+
+        // when
+        listener.handleReviewRequested(request);
+
+        // then
+        verify(pullRequestService).updateAiReview(1L, 1,
+                "AI review failed: OpenAI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
+                PullRequest.ReviewStatus.FAILED, "head");
     }
 }

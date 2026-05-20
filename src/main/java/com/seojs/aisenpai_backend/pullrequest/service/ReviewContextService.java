@@ -51,8 +51,22 @@ public class ReviewContextService {
         List<RelatedFileContextDto> relatedFiles = buildRelatedFileContexts(accessToken, owner, repo, prInfo,
                 fileContexts, treeDto, ignorePatterns, usedContentChars, usedContextChars);
 
-        log.info("Review context collected. changed={}, related={}, usedContentChars={}, usedContextChars={}",
-                fileContexts.size(), relatedFiles.size(), usedContentChars[0], usedContextChars[0]);
+        long skippedChangedFiles = fileContexts.stream()
+                .filter(file -> file.getContentFetchStatus() == ContentFetchStatus.SKIPPED)
+                .count();
+        long failedChangedFiles = fileContexts.stream()
+                .filter(file -> file.getContentFetchStatus() == ContentFetchStatus.FAILED)
+                .count();
+        long missingPatchFiles = fileContexts.stream()
+                .filter(file -> "missing patch".equals(file.getContentSkipReason()))
+                .count();
+        long truncatedChangedFiles = fileContexts.stream()
+                .filter(file -> file.isTruncated() || file.isPatchTruncated())
+                .count();
+        log.info("Review context collected. changed={}, related={}, skippedChanged={}, failedChanged={}, "
+                        + "missingPatch={}, truncatedChanged={}, usedContentChars={}, usedContextChars={}",
+                fileContexts.size(), relatedFiles.size(), skippedChangedFiles, failedChangedFiles, missingPatchFiles,
+                truncatedChangedFiles, usedContentChars[0], usedContextChars[0]);
 
         return ReviewContextDto.builder()
                 .pullRequest(buildPullRequestMeta(owner, repo, prNumber, prInfo))

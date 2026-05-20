@@ -2,6 +2,7 @@ package com.seojs.aisenpai_backend.github.service;
 
 import com.seojs.aisenpai_backend.ai.service.AiService;
 import com.seojs.aisenpai_backend.exception.GitHubApiEx;
+import com.seojs.aisenpai_backend.exception.GithubRateLimitEx;
 import com.seojs.aisenpai_backend.exception.GithubAccountNotFoundEx;
 import com.seojs.aisenpai_backend.exception.WebhookRegistrationEx;
 import com.seojs.aisenpai_backend.github.dto.*;
@@ -22,6 +23,8 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
@@ -34,6 +37,7 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 @Service
 public class GithubService {
+    private static final int GITHUB_PAGE_SIZE = 100;
 
     private final WebClient.Builder webClientBuilder;
     private final GithubAccountRepository githubAccountRepository;
@@ -265,15 +269,36 @@ public class GithubService {
      */
     public List<ChangedFileDto> getChangedFiles(String accessToken, String owner, String repo, int prNumber) {
         try {
-            return webClientBuilder.build()
-                    .get()
-                    .uri("https://api.github.com/repos/{owner}/{repo}/pulls/{prNumber}/files", owner, repo, prNumber)
-                    .header("Authorization", "Bearer " + accessToken)
-                    .header("Accept", "application/vnd.github.v3+json")
-                    .retrieve()
-                    .bodyToFlux(ChangedFileDto.class)
-                    .collectList()
-                    .block();
+            List<ChangedFileDto> files = new ArrayList<>();
+            int page = 1;
+            while (true) {
+                int currentPageNumber = page;
+                ChangedFileDto[] pageFiles = webClientBuilder.build()
+                        .get()
+                        .uri(uriBuilder -> uriBuilder
+                                .scheme("https")
+                                .host("api.github.com")
+                                .path("/repos/{owner}/{repo}/pulls/{prNumber}/files")
+                                .queryParam("per_page", GITHUB_PAGE_SIZE)
+                                .queryParam("page", currentPageNumber)
+                                .build(owner, repo, prNumber))
+                        .header("Authorization", "Bearer " + accessToken)
+                        .header("Accept", "application/vnd.github.v3+json")
+                        .retrieve()
+                        .bodyToMono(ChangedFileDto[].class)
+                        .block();
+
+                List<ChangedFileDto> currentPage = pageFiles == null ? List.of() : Arrays.asList(pageFiles);
+                files.addAll(currentPage);
+                if (currentPage.size() < GITHUB_PAGE_SIZE) {
+                    break;
+                }
+                page++;
+            }
+            log.info("Fetched changed files for {}/{} PR #{}: count={}", owner, repo, prNumber, files.size());
+            return files;
+        } catch (GithubRateLimitEx e) {
+            throw e;
         } catch (Exception e) {
             throw new GitHubApiEx("Failed to get changed files", e);
         }
