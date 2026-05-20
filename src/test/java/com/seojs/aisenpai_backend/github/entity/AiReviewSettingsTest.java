@@ -38,9 +38,13 @@ class AiReviewSettingsTest {
         assertTrue(prompt.contains("### 코드 리뷰 규칙"));
         assertTrue(prompt.contains("- [Target: *.java] DTO에는 @Builder 필수"));
         assertFalse(prompt.contains("console.log 금지"));
+        assertTrue(prompt.contains("diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선"));
         assertTrue(prompt.contains("\"path\""));
         assertTrue(prompt.contains("\"body\""));
         assertTrue(prompt.contains("comments에는 changedFiles.patch의 추가된 라인"));
+        assertTrue(prompt.contains("reviewContext.changedFiles 또는 changedFiles"));
+        assertTrue(prompt.contains("comments와 generalReview 모두에 지적 사항으로 작성하지 마세요"));
+        assertTrue(prompt.contains("comments는 빈 배열"));
         assertTrue(prompt.contains("테스트 파일 부재나 테스트 누락을 단정하지 마세요"));
     }
 
