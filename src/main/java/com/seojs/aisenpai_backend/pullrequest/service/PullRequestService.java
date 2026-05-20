@@ -13,8 +13,8 @@ import com.seojs.aisenpai_backend.github.dto.PullRequestInfoDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
+import com.seojs.aisenpai_backend.github.entity.Rule;
 import com.seojs.aisenpai_backend.github.service.GithubService;
-import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
@@ -50,8 +50,8 @@ public class PullRequestService {
     private final ApplicationEventPublisher eventPublisher;
     private final TokenEncryptionService tokenEncryptionService;
     private final NotificationService notificationService;
-    private final ReviewAnchorService reviewAnchorService;
     private final ReviewContextService reviewContextService;
+    private final ReviewFindingValidationService reviewFindingValidationService;
 
     private record ReviewProcessingResult(
             String accessToken,
@@ -275,18 +275,14 @@ public class PullRequestService {
         try {
             String sanitizedAiReview = sanitizeAiReview(aiReview);
             AiReviewResponseDto aiResponse = objectMapper.readValue(sanitizedAiReview, AiReviewResponseDto.class);
-            List<ReviewCommentDto> comments = aiResponse.getComments();
-            if (comments == null || comments.isEmpty()) {
-                return new ReviewProcessingResult(tokenEncryptionService.decryptToken(account.getAccessToken()),
-                        aiResponse, List.of());
-            }
-
             String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
             List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken,
                     account.getLoginId(), pr.getRepositoryName(), pr.getPrNumber());
-            List<ReviewCommentDto> enrichedComments = calculateLineNumbers(comments, changedFiles);
-            saveEnrichedReviewToDb(pr, aiResponse, enrichedComments);
-            return new ReviewProcessingResult(accessToken, aiResponse, enrichedComments);
+            ReviewFindingValidationService.ValidationResult validationResult = reviewFindingValidationService.validate(
+                    aiResponse, changedFiles, activeRules(account));
+            saveEnrichedReviewToDb(pr, validationResult.aiResponse());
+            return new ReviewProcessingResult(accessToken, validationResult.aiResponse(),
+                    validationResult.anchoredComments());
         } catch (Exception e) {
             log.warn("Failed to normalize AI review for PR #{}: {}", pr.getPrNumber(), e.getMessage());
             return null;
@@ -300,8 +296,8 @@ public class PullRequestService {
             ReviewProcessingResult reviewProcessingResult) {
         try {
             if (reviewProcessingResult == null) {
-                String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
-                postGeneralComment(accessToken, account, pr, aiReview);
+                log.warn("Skipping GitHub auto post for PR #{} because AI review could not be validated",
+                        pr.getPrNumber());
                 return;
             }
 
@@ -317,37 +313,6 @@ public class PullRequestService {
         }
     }
 
-    private List<ReviewCommentDto> calculateLineNumbers(List<ReviewCommentDto> comments,
-            List<ChangedFileDto> changedFiles) {
-        List<ReviewCommentDto> enrichedComments = new java.util.ArrayList<>();
-        int anchoredCount = 0;
-        int discardedCount = 0;
-        for (var comment : comments) {
-            String filePatch = changedFiles.stream()
-                    .filter(f -> f.getFilename().equals(comment.getPath()))
-                    .findFirst()
-                    .map(ChangedFileDto::getPatch)
-                    .orElse(null);
-            Integer line = isValidReviewComment(comment)
-                    ? reviewAnchorService.findLineNumber(filePatch, comment.getCodeSnippet())
-                    : null;
-            if (line != null) {
-                anchoredCount++;
-                enrichedComments.add(ReviewCommentDto.builder()
-                        .path(comment.getPath())
-                        .codeSnippet(comment.getCodeSnippet())
-                        .line(line)
-                        .side("RIGHT")
-                        .body(comment.getBody())
-                        .build());
-            } else {
-                discardedCount++;
-            }
-        }
-        log.info("Review anchor result: anchored={}, discarded={}", anchoredCount, discardedCount);
-        return enrichedComments;
-    }
-
     private boolean isValidReviewComment(ReviewCommentDto comment) {
         return comment != null
                 && hasText(comment.getPath())
@@ -355,14 +320,17 @@ public class PullRequestService {
                 && hasText(comment.getBody());
     }
 
-    private void saveEnrichedReviewToDb(PullRequest pr, AiReviewResponseDto originalResponse,
-            List<ReviewCommentDto> enrichedComments) throws Exception {
-        AiReviewResponseDto updatedResponse = AiReviewResponseDto.builder()
-                .generalReview(originalResponse.getGeneralReview())
-                .comments(enrichedComments)
-                .build();
+    private List<Rule> activeRules(GithubAccount account) {
+        if (account.getAiSettings() == null || account.getAiSettings().getRules() == null) {
+            return List.of();
+        }
+        return account.getAiSettings().getRules().stream()
+                .filter(Rule::isEnabled)
+                .toList();
+    }
 
-        String updatedJson = objectMapper.writeValueAsString(updatedResponse);
+    private void saveEnrichedReviewToDb(PullRequest pr, AiReviewResponseDto validatedResponse) throws Exception {
+        String updatedJson = objectMapper.writeValueAsString(validatedResponse);
         pr.updateAiReview(updatedJson);
     }
 
