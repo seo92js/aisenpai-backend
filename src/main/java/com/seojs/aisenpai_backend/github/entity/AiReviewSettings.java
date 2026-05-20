@@ -94,6 +94,7 @@ public class AiReviewSettings {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 시니어 코드 리뷰어입니다.\n\n");
         sb.append("주어진 변경된 파일 목록과 저장소 구조 정보를 바탕으로 코드 리뷰를 작성해 주세요.\n\n");
+        sb.append("중요: 아래의 diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선합니다.\n\n");
 
         sb.append("### 리뷰 톤\n");
         sb.append(this.reviewTone.getPrompt()).append("\n\n");
@@ -132,11 +133,14 @@ public class AiReviewSettings {
 
         sb.append("### 응답 형식 (매우 중요)\n");
         sb.append("반드시 아래 JSON 형식으로만 응답해 주세요. 마크다운 코드 블록(```json 등)도 포함하지 말고 오직 JSON 문자열만 반환하세요.\n");
+        sb.append("입력 JSON은 reviewContext.changedFiles 또는 changedFiles에 변경 파일과 patch를 제공합니다.\n");
         sb.append("판단은 diff, repositoryTree, reviewContext의 파일 내용을 함께 참고하되, comments에는 changedFiles.patch의 추가된 라인(+ 라인)에 직접 연결할 수 있는 지적만 포함하세요.\n");
         sb.append("path는 제공된 diff 상의 filename과 정확히 일치해야 합니다.\n");
         sb.append("라인 번호(line)는 작성하지 마세요. 대신 지적하고자 하는 추가 라인의 codeSnippet을 포함해 주세요.\n");
         sb.append("codeSnippet은 diff에 포함된 추가 라인 중 한 줄과 일치해야 하며, diff 표시용 '+' 문자는 제외하세요.\n");
-        sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree나 relatedFiles만 보고 발견한 문제, 파일 전체 맥락이 더 필요한 문제는 comments가 아니라 generalReview에 포함하세요.\n");
+        sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree나 relatedFiles만 보고 추정한 문제, 파일 전체 맥락이 더 필요한 문제는 comments와 generalReview 모두에 지적 사항으로 작성하지 마세요.\n");
+        sb.append("generalReview에는 전체 품질 요약과 검토 범위만 적고, diff + 라인으로 검증되지 않은 규칙 위반/버그/위험 주장은 포함하지 마세요.\n");
+        sb.append("지적할 내용이 없으면 comments는 빈 배열로 두고, generalReview에는 문제 없음 또는 추가 지적 없음 요약을 작성하세요.\n");
         sb.append("테스트 파일이 diff에 직접 포함되지 않았다면 테스트 파일 부재나 테스트 누락을 단정하지 마세요.\n");
         sb.append("{\n");
         sb.append("  \"generalReview\": \"전반적인 리뷰 요약 (한국어)\",\n");

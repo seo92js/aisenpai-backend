@@ -19,7 +19,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class ReviewFindingValidationService {
-    private static final String NO_VERIFIED_FINDINGS_MESSAGE = "검증 가능한 diff 라인 기준 코멘트가 없습니다.";
+    private static final String NO_VERIFIED_FINDINGS_MESSAGE =
+            "검토 결과, 이번 변경에서 추가로 지적할 diff 라인 기준 코멘트는 없습니다.";
     private static final List<String> FINDING_PHRASES = List.of(
             "규칙을 위반", "위반하고", "위반했습니다", "위반됩니다",
             "문제가 있습니다", "오류가 있습니다", "버그가 있습니다",
@@ -80,7 +81,7 @@ public class ReviewFindingValidationService {
         }
         if (looksLikeUnverifiedFinding(generalReview, rules)) {
             if (!anchoredComments.isEmpty()) {
-                return "diff 라인에 매칭된 리뷰 코멘트 " + anchoredComments.size() + "건이 있습니다.";
+                return "이번 변경에서 diff 라인 기준 리뷰 코멘트 " + anchoredComments.size() + "건을 확인했습니다.";
             }
             return NO_VERIFIED_FINDINGS_MESSAGE;
         }

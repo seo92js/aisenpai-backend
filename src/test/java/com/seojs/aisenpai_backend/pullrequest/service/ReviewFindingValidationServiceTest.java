@@ -66,7 +66,8 @@ class ReviewFindingValidationServiceTest {
                 List.of(changedFile("src/main/java/AiReviewSettings.java", patch)), List.of(rule));
 
         // then
-        assertEquals("검증 가능한 diff 라인 기준 코멘트가 없습니다.", result.aiResponse().getGeneralReview());
+        assertEquals("검토 결과, 이번 변경에서 추가로 지적할 diff 라인 기준 코멘트는 없습니다.",
+                result.aiResponse().getGeneralReview());
         assertFalse(result.aiResponse().getGeneralReview().contains("Setter"));
     }
 
@@ -159,7 +160,8 @@ class ReviewFindingValidationServiceTest {
         var result = service.validate(response, List.of(changedFile("src/App.java", patch)), List.of(rule));
 
         // then
-        assertEquals("diff 라인에 매칭된 리뷰 코멘트 1건이 있습니다.", result.aiResponse().getGeneralReview());
+        assertEquals("이번 변경에서 diff 라인 기준 리뷰 코멘트 1건을 확인했습니다.",
+                result.aiResponse().getGeneralReview());
         assertEquals(1, result.anchoredComments().size());
     }
 
