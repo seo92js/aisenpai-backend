@@ -458,7 +458,7 @@ class PullRequestServiceTest {
     }
 
     @Test
-    void updateAiReview_AutoPost_PostsOnlyAnchoredCommentsInlineAndFallbacksTheRest() {
+    void updateAiReview_AutoPost_PostsOnlyAnchoredCommentsAndDiscardsUnanchored() {
         // given
         Long repoId = 1L;
         Integer prNumber = 1;
@@ -523,13 +523,81 @@ class PullRequestServiceTest {
                 reviewCaptor.capture());
         assertEquals(1, reviewCaptor.getValue().getComments().size());
         assertEquals(2, reviewCaptor.getValue().getComments().get(0).getLine());
+        assertTrue(pr.getAiReview().contains("이 값은 생성자에서 검증하세요."));
+        assertFalse(pr.getAiReview().contains("기존 라인에 대한 의견입니다."));
 
+        verify(githubService, never()).postPRComment(anyString(), anyString(), anyString(), anyInt(), anyString());
+    }
+
+    @Test
+    void updateAiReview_AutoPost_UnanchoredCommentsOnly_PostsGeneralReviewOnly() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
+                webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
+                notificationService, new ReviewAnchorService(), reviewContextService);
+
+        GithubAccount account = GithubAccount.builder()
+                .loginId("user")
+                .accessToken("encrypted-token")
+                .build();
+        account.initializeAiSettings();
+        account.getAiSettings().updateReviewSettings(null, null, null, false, true, "gpt-4o-mini");
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+
+        String aiReview = """
+                {
+                  "generalReview": "전체 요약입니다.",
+                  "comments": [
+                    {
+                      "path": "src/App.java",
+                      "codeSnippet": "System.out.println(\\"deleted\\");",
+                      "body": "삭제된 라인에 대한 잘못된 의견입니다."
+                    },
+                    {
+                      "path": "src/Wrong.java",
+                      "codeSnippet": "private final String name;",
+                      "body": "경로가 틀린 의견입니다."
+                    }
+                  ]
+                }
+                """;
+        String patch = """
+                @@ -1,4 +1,3 @@
+                 class App {
+                -    System.out.println("deleted");
+                     void run() {}
+                 }
+                """;
+        ChangedFileDto changedFile = new ChangedFileDto(
+                "src/App.java", "modified", 0, 1, 1, 3, "sha", "blob", "raw", "contents", patch);
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
+        when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
+                .thenReturn(List.of(changedFile));
+
+        // when
+        service.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED, "head");
+
+        // then
+        verify(githubService, never()).postPRReview(anyString(), anyString(), anyString(), anyInt(), any());
         ArgumentCaptor<String> commentCaptor = ArgumentCaptor.forClass(String.class);
         verify(githubService).postPRComment(eq("access-token"), eq("user"), eq("repo"), eq(prNumber),
                 commentCaptor.capture());
-        assertTrue(commentCaptor.getValue().contains("기존 라인에 대한 의견입니다."));
-        assertFalse(commentCaptor.getValue().contains("이 값은 생성자에서 검증하세요."));
-        assertFalse(commentCaptor.getValue().contains("전체 요약입니다."));
+        assertTrue(commentCaptor.getValue().contains("전체 요약입니다."));
+        assertFalse(commentCaptor.getValue().contains("추가 코멘트"));
+        assertFalse(pr.getAiReview().contains("삭제된 라인에 대한 잘못된 의견입니다."));
+        assertFalse(pr.getAiReview().contains("경로가 틀린 의견입니다."));
     }
 
     @Test
