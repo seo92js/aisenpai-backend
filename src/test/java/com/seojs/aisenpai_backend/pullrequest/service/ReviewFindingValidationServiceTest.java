@@ -3,7 +3,6 @@ package com.seojs.aisenpai_backend.pullrequest.service;
 import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
-import com.seojs.aisenpai_backend.github.entity.Rule;
 import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
 import org.junit.jupiter.api.Test;
 
@@ -33,23 +32,19 @@ class ReviewFindingValidationServiceTest {
                 """;
 
         // when
-        var result = service.validate(response, List.of(changedFile("src/App.java", patch)), List.of());
+        var result = service.validate(response, List.of(changedFile("src/App.java", patch)));
 
         // then
         assertEquals(1, result.anchoredComments().size());
         assertEquals(2, result.anchoredComments().get(0).getLine());
         assertEquals(1, result.discardedCount());
-        assertEquals("전체적으로 변경 범위가 작고 구조가 명확합니다.", result.aiResponse().getGeneralReview());
+        assertEquals("변경 파일 1개를 검토했고, diff 기준 리뷰 코멘트 1건을 확인했습니다.",
+                result.aiResponse().getGeneralReview());
     }
 
     @Test
-    void validate_RemovesRuleLikeGeneralReviewWhenNoDiffEvidenceExists() {
+    void validate_ReplacesAiGeneralReviewWhenNoDiffCommentsExist() {
         // given
-        Rule rule = Rule.builder()
-                .content("Entity 클래스에는 Setter 금지")
-                .isEnabled(true)
-                .targetFilePattern("**/*.java")
-                .build();
         AiReviewResponseDto response = AiReviewResponseDto.builder()
                 .generalReview("RepositoryAiSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
                 .comments(List.of())
@@ -63,16 +58,16 @@ class ReviewFindingValidationServiceTest {
 
         // when
         var result = service.validate(response,
-                List.of(changedFile("src/main/java/RepositoryAiSettings.java", patch)), List.of(rule));
+                List.of(changedFile("src/main/java/RepositoryAiSettings.java", patch)));
 
         // then
-        assertEquals("검토 결과, 이번 변경에서 추가로 지적할 diff 라인 기준 코멘트는 없습니다.",
+        assertEquals("변경 파일 1개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
                 result.aiResponse().getGeneralReview());
         assertFalse(result.aiResponse().getGeneralReview().contains("Setter"));
     }
 
     @Test
-    void validate_KeepsNeutralGeneralSummaryWithoutFindings() {
+    void validate_GeneratesNoFindingGeneralReviewWhenNoCommentsRemain() {
         // given
         AiReviewResponseDto response = AiReviewResponseDto.builder()
                 .generalReview("전체적으로 변경 범위가 작고 구조가 명확합니다.")
@@ -80,14 +75,15 @@ class ReviewFindingValidationServiceTest {
                 .build();
 
         // when
-        var result = service.validate(response, List.of(), List.of());
+        var result = service.validate(response, List.of());
 
         // then
-        assertEquals("전체적으로 변경 범위가 작고 구조가 명확합니다.", result.aiResponse().getGeneralReview());
+        assertEquals("변경 파일 0개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
+                result.aiResponse().getGeneralReview());
     }
 
     @Test
-    void validate_KeepsGeneralSummaryThatUsesBroadReviewWords() {
+    void validate_DoesNotPreserveAiGeneralReviewText() {
         // given
         AiReviewResponseDto response = AiReviewResponseDto.builder()
                 .generalReview("전체적으로 구조가 개선되었고 필요한 변경만 포함되어 있습니다.")
@@ -95,30 +91,27 @@ class ReviewFindingValidationServiceTest {
                 .build();
 
         // when
-        var result = service.validate(response, List.of(), List.of());
+        var result = service.validate(response, List.of());
 
         // then
-        assertEquals("전체적으로 구조가 개선되었고 필요한 변경만 포함되어 있습니다.", result.aiResponse().getGeneralReview());
+        assertEquals("변경 파일 0개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
+                result.aiResponse().getGeneralReview());
     }
 
     @Test
-    void validate_KeepsRuleKeywordWhenItIsNotAViolationClaim() {
+    void validate_DoesNotPreserveAiGeneralReviewEvenWhenItLooksNeutral() {
         // given
-        Rule rule = Rule.builder()
-                .content("Entity 클래스에는 Setter 금지")
-                .isEnabled(true)
-                .targetFilePattern("**/*.java")
-                .build();
         AiReviewResponseDto response = AiReviewResponseDto.builder()
                 .generalReview("Setter 없이 생성자 중심으로 값이 설정되어 있습니다.")
                 .comments(List.of())
                 .build();
 
         // when
-        var result = service.validate(response, List.of(), List.of(rule));
+        var result = service.validate(response, List.of());
 
         // then
-        assertEquals("Setter 없이 생성자 중심으로 값이 설정되어 있습니다.", result.aiResponse().getGeneralReview());
+        assertEquals("변경 파일 0개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
+                result.aiResponse().getGeneralReview());
     }
 
     @Test
@@ -130,21 +123,18 @@ class ReviewFindingValidationServiceTest {
                 .build();
 
         // when
-        var result = service.validate(response, null, List.of());
+        var result = service.validate(response, null);
 
         // then
         assertEquals(0, result.anchoredComments().size());
         assertEquals(1, result.discardedCount());
+        assertEquals("변경 파일 0개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
+                result.aiResponse().getGeneralReview());
     }
 
     @Test
     void validate_ReplacesFindingLikeGeneralReviewEvenWhenCommentsAreAnchored() {
         // given
-        Rule rule = Rule.builder()
-                .content("Entity 클래스에는 Setter 금지")
-                .isEnabled(true)
-                .targetFilePattern("**/*.java")
-                .build();
         AiReviewResponseDto response = AiReviewResponseDto.builder()
                 .generalReview("RepositoryAiSettings 엔티티 클래스에서 Setter 금지 규칙을 위반하고 있습니다.")
                 .comments(List.of(comment("src/App.java", "private final String name;", "생성자 검증이 필요합니다.")))
@@ -157,10 +147,10 @@ class ReviewFindingValidationServiceTest {
                 """;
 
         // when
-        var result = service.validate(response, List.of(changedFile("src/App.java", patch)), List.of(rule));
+        var result = service.validate(response, List.of(changedFile("src/App.java", patch)));
 
         // then
-        assertEquals("이번 변경에서 diff 라인 기준 리뷰 코멘트 1건을 확인했습니다.",
+        assertEquals("변경 파일 1개를 검토했고, diff 기준 리뷰 코멘트 1건을 확인했습니다.",
                 result.aiResponse().getGeneralReview());
         assertEquals(1, result.anchoredComments().size());
     }

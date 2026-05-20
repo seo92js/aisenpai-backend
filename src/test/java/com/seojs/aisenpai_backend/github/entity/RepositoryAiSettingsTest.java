@@ -44,12 +44,17 @@ class RepositoryAiSettingsTest {
         assertTrue(prompt.contains("버그, 보안, 데이터 손실"));
         assertTrue(prompt.contains("단순 취향, 포맷팅, 사소한 네이밍"));
         assertTrue(prompt.contains("확실하지 않은 문제는 단정하지 말고"));
+        assertTrue(prompt.contains("일반적인 주의사항, 권장사항, 가능성 언급, 스타일 의견은 작성하지 마세요"));
+        assertTrue(prompt.contains("명백하게 확인되는 문제만 리뷰하세요"));
+        assertTrue(prompt.contains("이미 코드에 존재하는 처리"));
         assertTrue(prompt.contains("diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선"));
         assertTrue(prompt.contains("\"path\""));
         assertTrue(prompt.contains("\"body\""));
         assertTrue(prompt.contains("comments에는 changedFiles.patch의 추가된 라인"));
         assertTrue(prompt.contains("reviewContext.changedFiles 또는 changedFiles"));
         assertTrue(prompt.contains("comments와 generalReview 모두에 지적 사항으로 작성하지 마세요"));
+        assertTrue(prompt.contains("실제 게시용 generalReview는 서버가 검증 결과를 기준으로 생성"));
+        assertTrue(prompt.contains("\"generalReview\": \"\""));
         assertTrue(prompt.contains("comments는 빈 배열"));
         assertTrue(prompt.contains("테스트 파일 부재나 테스트 누락을 단정하지 마세요"));
     }

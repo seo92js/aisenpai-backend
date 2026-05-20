@@ -140,6 +140,10 @@ public class RepositoryAiSettings {
         sb.append("리뷰 우선순위는 버그, 보안, 데이터 손실, 권한 문제, 동시성 문제, 예외 처리 누락, API 계약 깨짐, 성능 회귀, 유지보수성입니다.\n");
         sb.append("단순 취향, 포맷팅, 사소한 네이밍은 명확한 리스크가 없으면 지적하지 마세요.\n");
         sb.append("확실하지 않은 문제는 단정하지 말고, 근거 없는 코멘트를 만들지 마세요.\n");
+        sb.append("일반적인 주의사항, 권장사항, 가능성 언급, 스타일 의견은 작성하지 마세요.\n");
+        sb.append("반드시 제공된 diff와 reviewContext 코드에서 명백하게 확인되는 문제만 리뷰하세요.\n");
+        sb.append("코드 근거 없이 \"필요합니다\", \"주의가 필요합니다\", \"발생할 수 있습니다\"처럼 추측성 표현으로 comment를 작성하지 마세요.\n");
+        sb.append("이미 코드에 존재하는 처리(예: 트랜잭션, 검증, 예외 처리, 권한 체크)를 요구하지 마세요.\n");
         sb.append("주어진 변경된 파일 목록과 저장소 구조 정보는 변경 이해를 위한 보조 자료로 사용하세요.\n\n");
         sb.append("중요: 아래의 diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선합니다.\n\n");
 
@@ -183,11 +187,11 @@ public class RepositoryAiSettings {
         sb.append("라인 번호(line)는 작성하지 마세요. 대신 지적하고자 하는 추가 라인의 codeSnippet을 포함해 주세요.\n");
         sb.append("codeSnippet은 diff에 포함된 추가 라인 중 한 줄과 일치해야 하며, diff 표시용 '+' 문자는 제외하세요.\n");
         sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree나 relatedFiles만 보고 추정한 문제, 파일 전체 맥락이 더 필요한 문제는 comments와 generalReview 모두에 지적 사항으로 작성하지 마세요.\n");
-        sb.append("generalReview에는 전체 품질 요약과 검토 범위만 적고, diff + 라인으로 검증되지 않은 규칙 위반/버그/위험 주장은 포함하지 마세요.\n");
-        sb.append("지적할 내용이 없으면 comments는 빈 배열로 두고, generalReview에는 문제 없음 또는 추가 지적 없음 요약을 작성하세요.\n");
+        sb.append("generalReview에는 finding이나 문제 제기를 작성하지 마세요. 실제 게시용 generalReview는 서버가 검증 결과를 기준으로 생성하므로 빈 문자열로 두어도 됩니다.\n");
+        sb.append("지적할 내용이 없으면 comments는 빈 배열로 두세요.\n");
         sb.append("테스트 파일이 diff에 직접 포함되지 않았다면 테스트 파일 부재나 테스트 누락을 단정하지 마세요.\n");
         sb.append("{\n");
-        sb.append("  \"generalReview\": \"전반적인 리뷰 요약 (한국어)\",\n");
+        sb.append("  \"generalReview\": \"\",\n");
         sb.append("  \"comments\": [\n");
         sb.append("    {\n");
         sb.append("      \"path\": \"src/main/java/Example.java\",\n");

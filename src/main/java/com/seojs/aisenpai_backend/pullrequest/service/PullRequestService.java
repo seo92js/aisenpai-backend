@@ -14,7 +14,6 @@ import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.entity.RepositoryAiSettings;
-import com.seojs.aisenpai_backend.github.entity.Rule;
 import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
@@ -300,7 +299,7 @@ public class PullRequestService {
             List<ChangedFileDto> changedFiles = githubService.getChangedFiles(accessToken,
                     settings.getOwner(), pr.getRepositoryName(), pr.getPrNumber());
             ReviewFindingValidationService.ValidationResult validationResult = reviewFindingValidationService.validate(
-                    aiResponse, changedFiles, activeRules(settings));
+                    aiResponse, changedFiles);
             saveEnrichedReviewToDb(pr, validationResult.aiResponse());
             return new ReviewProcessingResult(accessToken, validationResult.aiResponse(),
                     validationResult.anchoredComments());
@@ -339,10 +338,6 @@ public class PullRequestService {
                 && hasText(comment.getPath())
                 && hasText(comment.getCodeSnippet())
                 && hasText(comment.getBody());
-    }
-
-    private List<Rule> activeRules(RepositoryAiSettings settings) {
-        return settings.getActiveRules();
     }
 
     private void saveEnrichedReviewToDb(PullRequest pr, AiReviewResponseDto validatedResponse) throws Exception {

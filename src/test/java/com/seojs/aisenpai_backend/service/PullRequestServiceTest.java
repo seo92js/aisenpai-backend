@@ -630,7 +630,7 @@ class PullRequestServiceTest {
         ArgumentCaptor<String> commentCaptor = ArgumentCaptor.forClass(String.class);
         verify(githubService).postPRComment(eq("access-token"), eq("user"), eq("repo"), eq(prNumber),
                 commentCaptor.capture());
-        assertTrue(commentCaptor.getValue().contains("전체 요약입니다."));
+        assertTrue(commentCaptor.getValue().contains("변경 파일 1개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다."));
         assertFalse(commentCaptor.getValue().contains("추가 코멘트"));
         assertFalse(pr.getAiReview().contains("삭제된 라인에 대한 잘못된 의견입니다."));
         assertFalse(pr.getAiReview().contains("경로가 틀린 의견입니다."));
