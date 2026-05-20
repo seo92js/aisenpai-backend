@@ -137,6 +137,7 @@ public class AiReviewSettings {
         sb.append("라인 번호(line)는 작성하지 마세요. 대신 지적하고자 하는 추가 라인의 codeSnippet을 포함해 주세요.\n");
         sb.append("codeSnippet은 diff에 포함된 추가 라인 중 한 줄과 일치해야 하며, diff 표시용 '+' 문자는 제외하세요.\n");
         sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree나 relatedFiles만 보고 발견한 문제, 파일 전체 맥락이 더 필요한 문제는 comments가 아니라 generalReview에 포함하세요.\n");
+        sb.append("테스트 파일이 diff에 직접 포함되지 않았다면 테스트 파일 부재나 테스트 누락을 단정하지 마세요.\n");
         sb.append("{\n");
         sb.append("  \"generalReview\": \"전반적인 리뷰 요약 (한국어)\",\n");
         sb.append("  \"comments\": [\n");

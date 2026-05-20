@@ -94,6 +94,8 @@ public class ReviewContextDto {
         private int maxContextFiles;
         private int maxPatchChars;
         private int maxFileContentChars;
+        private int maxRelatedFiles;
+        private int maxRelatedFileContentChars;
         private int maxTotalContentChars;
         private int maxTreeChars;
         private int maxContextChars;

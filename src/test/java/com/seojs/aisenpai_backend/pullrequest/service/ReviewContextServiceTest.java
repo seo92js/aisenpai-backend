@@ -26,7 +26,7 @@ class ReviewContextServiceTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        reviewContextService = new ReviewContextService(githubService);
+        reviewContextService = new ReviewContextService(githubService, new RelatedFileCandidateService());
     }
 
     @Test
@@ -140,6 +140,78 @@ class ReviewContextServiceTest {
         assertEquals("", context.getRepositoryTree().getSummary());
     }
 
+    @Test
+    void buildReviewContext_IncludesLimitedRelatedFileContent() {
+        // given
+        PullRequestInfoDto prInfo = prInfo("base-sha", "head-sha");
+        ChangedFileDto file = changedFile("src/App.tsx", "modified",
+                "@@ -1 +1 @@\n+import { AppProps } from './App.types';");
+        GitTreeResponseDto treeDto = tree("src/App.tsx", "src/App.types.ts", "src/App.css");
+
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.tsx", "head-sha"))
+                .thenReturn("import { AppProps } from './App.types';");
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.types.ts", "head-sha"))
+                .thenReturn("export interface AppProps { name: string; }");
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.css", "head-sha"))
+                .thenReturn(".app { color: red; }");
+
+        // when
+        ReviewContextDto context = reviewContextService.buildReviewContext("token", "owner", "repo", 1,
+                prInfo, List.of(file), treeDto, List.of());
+
+        // then
+        assertEquals(2, context.getRelatedFiles().size());
+        assertEquals("src/App.types.ts", context.getRelatedFiles().get(0).getPath());
+        assertEquals(ContentFetchStatus.FETCHED, context.getRelatedFiles().get(0).getContentFetchStatus());
+        assertEquals(RelatedFileCandidateService.MAX_RELATED_FILES, context.getBudget().getMaxRelatedFiles());
+        assertEquals(ReviewContextService.MAX_RELATED_FILE_CONTENT_CHARS,
+                context.getBudget().getMaxRelatedFileContentChars());
+    }
+
+    @Test
+    void buildReviewContext_RelatedFileFetchFailure_DoesNotFailContextBuild() {
+        // given
+        PullRequestInfoDto prInfo = prInfo("base-sha", "head-sha");
+        ChangedFileDto file = changedFile("src/App.tsx", "modified", "@@ -1 +1 @@\n+export function App() {}");
+        GitTreeResponseDto treeDto = tree("src/App.tsx", "src/App.css");
+
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.tsx", "head-sha"))
+                .thenReturn("export function App() {}");
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.css", "head-sha"))
+                .thenThrow(new RuntimeException("github failed"));
+
+        // when
+        ReviewContextDto context = reviewContextService.buildReviewContext("token", "owner", "repo", 1,
+                prInfo, List.of(file), treeDto, List.of());
+
+        // then
+        assertEquals(1, context.getRelatedFiles().size());
+        assertEquals(ContentFetchStatus.FAILED, context.getRelatedFiles().get(0).getContentFetchStatus());
+        assertEquals("content fetch failed", context.getRelatedFiles().get(0).getContentSkipReason());
+    }
+
+    @Test
+    void buildReviewContext_RelatedFileContent_IsTruncated() {
+        // given
+        PullRequestInfoDto prInfo = prInfo("base-sha", "head-sha");
+        ChangedFileDto file = changedFile("src/App.tsx", "modified", "@@ -1 +1 @@\n+export function App() {}");
+        GitTreeResponseDto treeDto = tree("src/App.tsx", "src/App.css");
+
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.tsx", "head-sha"))
+                .thenReturn("export function App() {}");
+        when(githubService.getFileContent("token", "owner", "repo", "src/App.css", "head-sha"))
+                .thenReturn("a".repeat(ReviewContextService.MAX_RELATED_FILE_CONTENT_CHARS + 1));
+
+        // when
+        ReviewContextDto context = reviewContextService.buildReviewContext("token", "owner", "repo", 1,
+                prInfo, List.of(file), treeDto, List.of());
+
+        // then
+        assertTrue(context.getRelatedFiles().get(0).isTruncated());
+        assertEquals(ReviewContextService.MAX_RELATED_FILE_CONTENT_CHARS,
+                context.getRelatedFiles().get(0).getContent().length());
+    }
+
     private PullRequestInfoDto prInfo(String baseSha, String headSha) {
         PullRequestInfoDto prInfo = new PullRequestInfoDto();
         PullRequestInfoDto.PullRequestRefDto base = new PullRequestInfoDto.PullRequestRefDto();
@@ -155,5 +227,18 @@ class ReviewContextServiceTest {
 
     private ChangedFileDto changedFile(String filename, String status, String patch) {
         return new ChangedFileDto(filename, status, 1, 0, 1, 10, "sha", "blob", "raw", "contents", patch);
+    }
+
+    private GitTreeResponseDto tree(String... paths) {
+        GitTreeResponseDto treeDto = new GitTreeResponseDto();
+        treeDto.setTree(List.of(paths).stream().map(this::treeItem).toList());
+        return treeDto;
+    }
+
+    private GitTreeResponseDto.GitTreeItemDto treeItem(String path) {
+        GitTreeResponseDto.GitTreeItemDto item = new GitTreeResponseDto.GitTreeItemDto();
+        item.setType("blob");
+        item.setPath(path);
+        return item;
     }
 }
