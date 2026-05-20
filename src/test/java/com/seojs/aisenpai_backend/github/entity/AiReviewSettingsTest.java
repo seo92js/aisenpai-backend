@@ -38,6 +38,10 @@ class AiReviewSettingsTest {
         assertTrue(prompt.contains("### 코드 리뷰 규칙"));
         assertTrue(prompt.contains("- [Target: *.java] DTO에는 @Builder 필수"));
         assertFalse(prompt.contains("console.log 금지"));
+        assertTrue(prompt.contains("이번 PR의 변경으로 새로 생긴 실제 위험"));
+        assertTrue(prompt.contains("버그, 보안, 데이터 손실"));
+        assertTrue(prompt.contains("단순 취향, 포맷팅, 사소한 네이밍"));
+        assertTrue(prompt.contains("확실하지 않은 문제는 단정하지 말고"));
         assertTrue(prompt.contains("diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선"));
         assertTrue(prompt.contains("\"path\""));
         assertTrue(prompt.contains("\"body\""));
