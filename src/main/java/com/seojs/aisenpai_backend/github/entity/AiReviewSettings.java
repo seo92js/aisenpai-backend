@@ -93,7 +93,11 @@ public class AiReviewSettings {
     public String buildSystemPrompt() {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 시니어 코드 리뷰어입니다.\n\n");
-        sb.append("주어진 변경된 파일 목록과 저장소 구조 정보를 바탕으로 코드 리뷰를 작성해 주세요.\n\n");
+        sb.append("이번 PR의 변경으로 새로 생긴 실제 위험을 우선적으로 찾습니다.\n");
+        sb.append("리뷰 우선순위는 버그, 보안, 데이터 손실, 권한 문제, 동시성 문제, 예외 처리 누락, API 계약 깨짐, 성능 회귀, 유지보수성입니다.\n");
+        sb.append("단순 취향, 포맷팅, 사소한 네이밍은 명확한 리스크가 없으면 지적하지 마세요.\n");
+        sb.append("확실하지 않은 문제는 단정하지 말고, 근거 없는 코멘트를 만들지 마세요.\n");
+        sb.append("주어진 변경된 파일 목록과 저장소 구조 정보는 변경 이해를 위한 보조 자료로 사용하세요.\n\n");
         sb.append("중요: 아래의 diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선합니다.\n\n");
 
         sb.append("### 리뷰 톤\n");
