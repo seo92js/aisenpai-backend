@@ -1,6 +1,5 @@
 package com.seojs.aisenpai_backend.pullrequest.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.seojs.aisenpai_backend.ai.service.AiService;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
@@ -10,7 +9,6 @@ import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.ReviewStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -38,9 +36,9 @@ public class PullRequestReviewListener {
 
         String systemPrompt = dto.getSystemPrompt();
         String encryptedKey = dto.getEncryptedOpenAiKey();
-        String openApiKey = tokenEncryptionService.decryptToken(encryptedKey);
 
         try {
+            String openApiKey = tokenEncryptionService.decryptToken(encryptedKey);
             Map<String, Object> aiPayload = new HashMap<>();
             if (dto.getReviewContext() != null) {
                 aiPayload.put("reviewContext", dto.getReviewContext());
@@ -55,23 +53,12 @@ public class PullRequestReviewListener {
             String review = aiService.callAiChat(openApiKey, systemPrompt, userPrompt, model, null);
             pullRequestService.updateAiReview(repositoryId, prNumber, review, ReviewStatus.COMPLETED,
                     dto.getReviewStartedHeadSha());
-        } catch (JsonProcessingException e) {
-            log.error("json processing failed - repositoryId: {}, pr: {}", repositoryId, prNumber, e);
-            pullRequestService.updateAiReview(repositoryId, prNumber,
-                    "AI review failed: Json processing failed", ReviewStatus.FAILED, dto.getReviewStartedHeadSha());
-        } catch (IllegalArgumentException e) {
-            log.error("invalid api configuration - repositoryId: {}, pr: {}", repositoryId, prNumber,
-                    e);
-            pullRequestService.updateAiReview(repositoryId, prNumber,
-                    "AI review failed: Invalid API configuration", ReviewStatus.FAILED, dto.getReviewStartedHeadSha());
-        } catch (NonTransientAiException e) {
-            log.error("invalid api key error - repositoryId: {}, pr: {}", repositoryId, prNumber, e);
-            pullRequestService.updateAiReview(repositoryId, prNumber,
-                    "AI review failed: Invalid API key", ReviewStatus.FAILED, dto.getReviewStartedHeadSha());
         } catch (Exception e) {
-            log.error("unexpected error - repositoryId: {}, pr: {}", repositoryId, prNumber, e);
-            pullRequestService.updateAiReview(repositoryId, prNumber,
-                    "AI review failed: Unexpected error", ReviewStatus.FAILED, dto.getReviewStartedHeadSha());
+            String failureCode = ReviewFailureClassifier.codeFor(e);
+            String failureMessage = ReviewFailureClassifier.messageFor(e);
+            log.error("AI review failed. repositoryId={}, pr={}, reason={}", repositoryId, prNumber, failureCode, e);
+            pullRequestService.updateAiReview(repositoryId, prNumber, failureMessage, ReviewStatus.FAILED,
+                    dto.getReviewStartedHeadSha());
         }
     }
 }

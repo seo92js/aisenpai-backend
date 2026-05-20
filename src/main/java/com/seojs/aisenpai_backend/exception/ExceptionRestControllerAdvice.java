@@ -64,6 +64,15 @@ public class ExceptionRestControllerAdvice {
         return new ErrorDto(errorCode, message);
     }
 
+    @ResponseStatus(HttpStatus.TOO_MANY_REQUESTS)
+    @ExceptionHandler(GithubRateLimitEx.class)
+    public ErrorDto githubRateLimitException(GithubRateLimitEx e) {
+        String errorCode = "GITHUB_RATE_LIMIT";
+        String message = e.getMessage();
+        log.error("{} : {}", errorCode, message);
+        return new ErrorDto(errorCode, message);
+    }
+
     @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
     @ExceptionHandler(WebhookProcessingEx.class)
     public ErrorDto webhookProcessingException(WebhookProcessingEx e) {
