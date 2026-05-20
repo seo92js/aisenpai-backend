@@ -7,12 +7,13 @@ import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto.ChangedFileContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto.ContentFetchStatus;
+import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto.RelatedFileContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto.RepositoryTreeContextDto;
+import com.seojs.aisenpai_backend.pullrequest.service.RelatedFileCandidateService.RelatedFileCandidate;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -26,17 +27,13 @@ public class ReviewContextService {
     public static final int MAX_CONTEXT_FILES = 12;
     public static final int MAX_PATCH_CHARS = 12_000;
     public static final int MAX_FILE_CONTENT_CHARS = 12_000;
+    public static final int MAX_RELATED_FILE_CONTENT_CHARS = 6_000;
     public static final int MAX_TOTAL_CONTENT_CHARS = 80_000;
     public static final int MAX_TREE_CHARS = 10_000;
     public static final int MAX_CONTEXT_CHARS = 100_000;
 
-    private static final List<String> GENERATED_OR_VENDOR_PATH_PARTS = List.of(
-            "/node_modules/", "/vendor/", "/dist/", "/build/", "/target/", "/coverage/", "/.next/", "/out/");
-    private static final List<String> BINARY_EXTENSIONS = List.of(
-            ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".tar", ".jar",
-            ".class", ".wasm", ".woff", ".woff2", ".ttf", ".eot", ".mp4", ".mov", ".avi", ".mp3");
-
     private final GithubService githubService;
+    private final RelatedFileCandidateService relatedFileCandidateService;
 
     public ReviewContextDto buildReviewContext(String accessToken, String owner, String repo, Integer prNumber,
             PullRequestInfoDto prInfo, List<ChangedFileDto> changedFiles, GitTreeResponseDto treeDto,
@@ -44,23 +41,30 @@ public class ReviewContextService {
         int[] usedContentChars = { 0 };
         int[] usedContextChars = { 0 };
         List<ChangedFileContextDto> fileContexts = new ArrayList<>();
-        List<PathMatcher> ignoreMatchers = buildIgnoreMatchers(ignorePatterns);
+        List<PathMatcher> ignoreMatchers = ReviewPathUtils.buildIgnoreMatchers(ignorePatterns);
         RepositoryTreeContextDto repositoryTree = buildRepositoryTreeContext(treeDto, usedContextChars);
 
         for (ChangedFileDto file : changedFiles) {
             fileContexts.add(buildChangedFileContext(accessToken, owner, repo, prInfo, file, ignoreMatchers,
                     usedContentChars, usedContextChars, fileContexts.size()));
         }
+        List<RelatedFileContextDto> relatedFiles = buildRelatedFileContexts(accessToken, owner, repo, prInfo,
+                fileContexts, treeDto, ignorePatterns, usedContentChars, usedContextChars);
+
+        log.info("Review context collected. changed={}, related={}, usedContentChars={}, usedContextChars={}",
+                fileContexts.size(), relatedFiles.size(), usedContentChars[0], usedContextChars[0]);
 
         return ReviewContextDto.builder()
                 .pullRequest(buildPullRequestMeta(owner, repo, prNumber, prInfo))
                 .changedFiles(fileContexts)
                 .repositoryTree(repositoryTree)
-                .relatedFiles(Collections.emptyList())
+                .relatedFiles(relatedFiles)
                 .budget(ReviewContextDto.BudgetDto.builder()
                         .maxContextFiles(MAX_CONTEXT_FILES)
                         .maxPatchChars(MAX_PATCH_CHARS)
                         .maxFileContentChars(MAX_FILE_CONTENT_CHARS)
+                        .maxRelatedFiles(RelatedFileCandidateService.MAX_RELATED_FILES)
+                        .maxRelatedFileContentChars(MAX_RELATED_FILE_CONTENT_CHARS)
                         .maxTotalContentChars(MAX_TOTAL_CONTENT_CHARS)
                         .maxTreeChars(MAX_TREE_CHARS)
                         .maxContextChars(MAX_CONTEXT_CHARS)
@@ -134,6 +138,75 @@ public class ReviewContextService {
         }
     }
 
+    private List<RelatedFileContextDto> buildRelatedFileContexts(String accessToken, String owner, String repo,
+            PullRequestInfoDto prInfo, List<ChangedFileContextDto> changedFileContexts, GitTreeResponseDto treeDto,
+            List<String> ignorePatterns, int[] usedContentChars, int[] usedContextChars) {
+        List<RelatedFileCandidate> candidates = relatedFileCandidateService.findCandidates(changedFileContexts,
+                treeDto, ignorePatterns);
+        if (candidates.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        String headSha = prInfo != null && prInfo.getHead() != null && prInfo.getHead().getSha() != null
+                ? prInfo.getHead().getSha()
+                : "HEAD";
+        List<RelatedFileContextDto> relatedFiles = new ArrayList<>();
+        int skippedCount = 0;
+        int truncatedCount = 0;
+        for (RelatedFileCandidate candidate : candidates) {
+            try {
+                String content = githubService.getFileContent(accessToken, owner, repo, candidate.path(), headSha);
+                if (content == null) {
+                    skippedCount++;
+                    relatedFiles.add(buildRelatedFileContext(candidate, headSha, null, ContentFetchStatus.SKIPPED,
+                            "empty content", false));
+                    continue;
+                }
+
+                ContentLimitResult limitResult = applyRelatedContentBudget(content, usedContentChars[0],
+                        usedContextChars[0]);
+                if (limitResult.content() == null) {
+                    skippedCount++;
+                    relatedFiles.add(buildRelatedFileContext(candidate, headSha, null, ContentFetchStatus.SKIPPED,
+                            limitResult.reason(), false));
+                    continue;
+                }
+
+                if (limitResult.truncated()) {
+                    truncatedCount++;
+                }
+                usedContentChars[0] += limitResult.content().length();
+                usedContextChars[0] += candidate.path().length() + candidate.reason().length()
+                        + limitResult.content().length();
+                relatedFiles.add(buildRelatedFileContext(candidate, headSha, limitResult.content(),
+                        ContentFetchStatus.FETCHED, limitResult.reason(), limitResult.truncated()));
+            } catch (Exception e) {
+                skippedCount++;
+                log.warn("Failed to fetch related review context content for {}: {}", candidate.path(),
+                        e.getMessage());
+                relatedFiles.add(buildRelatedFileContext(candidate, headSha, null, ContentFetchStatus.FAILED,
+                        "content fetch failed", false));
+            }
+        }
+
+        log.info("Related context collected. candidates={}, related={}, skipped={}, truncated={}",
+                candidates.size(), relatedFiles.size(), skippedCount, truncatedCount);
+        return relatedFiles;
+    }
+
+    private RelatedFileContextDto buildRelatedFileContext(RelatedFileCandidate candidate, String ref, String content,
+            ContentFetchStatus status, String skipReason, boolean truncated) {
+        return RelatedFileContextDto.builder()
+                .path(candidate.path())
+                .ref(ref)
+                .content(content)
+                .reason(candidate.reason())
+                .contentFetchStatus(status)
+                .contentSkipReason(skipReason)
+                .truncated(truncated)
+                .build();
+    }
+
     private String resolveSkipReason(ChangedFileDto file, List<PathMatcher> ignoreMatchers, int fileIndex) {
         String filename = file.getFilename();
         String normalizedPath = "/" + filename;
@@ -150,10 +223,10 @@ public class ReviewContextService {
         if (file.getPatch() == null || file.getPatch().isBlank()) {
             return "missing patch";
         }
-        if (isBinaryPath(filename)) {
+        if (ReviewPathUtils.isBinaryPath(filename)) {
             return "binary file";
         }
-        if (isGeneratedOrVendorPath(normalizedPath)) {
+        if (ReviewPathUtils.isGeneratedOrVendorPath(normalizedPath)) {
             return "generated/vendor/build output";
         }
         if (matchesIgnorePattern(filename, ignoreMatchers)) {
@@ -174,6 +247,23 @@ public class ReviewContextService {
         int allowedChars = Math.min(MAX_FILE_CONTENT_CHARS, remaining);
         if (content.length() > allowedChars) {
             return new ContentLimitResult(content.substring(0, allowedChars), true, "content truncated by budget");
+        }
+
+        return new ContentLimitResult(content, false, null);
+    }
+
+    private ContentLimitResult applyRelatedContentBudget(String content, int usedContentChars, int usedContextChars) {
+        int remainingTotal = MAX_TOTAL_CONTENT_CHARS - usedContentChars;
+        int remainingContext = MAX_CONTEXT_CHARS - usedContextChars;
+        int remaining = Math.min(remainingTotal, remainingContext);
+        if (remaining <= 0) {
+            return new ContentLimitResult(null, false, "context budget exceeded");
+        }
+
+        int allowedChars = Math.min(MAX_RELATED_FILE_CONTENT_CHARS, remaining);
+        if (content.length() > allowedChars) {
+            return new ContentLimitResult(content.substring(0, allowedChars), true,
+                    "related content truncated by budget");
         }
 
         return new ContentLimitResult(content, false, null);
@@ -223,54 +313,8 @@ public class ReviewContextService {
                 .build();
     }
 
-    private List<PathMatcher> buildIgnoreMatchers(List<String> ignorePatterns) {
-        if (ignorePatterns == null || ignorePatterns.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return ignorePatterns.stream()
-                .filter(pattern -> pattern != null && !pattern.isBlank())
-                .map(this::convertUserPatternToGlob)
-                .map(pattern -> FileSystems.getDefault().getPathMatcher("glob:" + pattern))
-                .toList();
-    }
-
     private boolean matchesIgnorePattern(String filename, List<PathMatcher> ignoreMatchers) {
         return ignoreMatchers.stream().anyMatch(matcher -> matcher.matches(Paths.get(filename)));
-    }
-
-    private boolean isGeneratedOrVendorPath(String normalizedPath) {
-        return GENERATED_OR_VENDOR_PATH_PARTS.stream().anyMatch(normalizedPath::contains);
-    }
-
-    private boolean isBinaryPath(String filename) {
-        String lower = filename.toLowerCase();
-        return BINARY_EXTENSIONS.stream().anyMatch(lower::endsWith);
-    }
-
-    private String convertUserPatternToGlob(String pattern) {
-        pattern = pattern.trim();
-        boolean isDirectory = pattern.endsWith("/");
-        if (isDirectory) {
-            pattern = pattern.substring(0, pattern.length() - 1);
-        }
-
-        boolean isRooted = pattern.startsWith("/");
-        if (isRooted) {
-            pattern = pattern.substring(1);
-        }
-
-        boolean hasSlash = pattern.contains("/");
-        StringBuilder glob = new StringBuilder();
-        if (!isRooted && !hasSlash) {
-            glob.append("{**/,}");
-        }
-        glob.append(pattern);
-        if (isDirectory) {
-            glob.append("/**");
-        } else {
-            glob.append("{,/**}");
-        }
-        return glob.toString();
     }
 
     private record ContentLimitResult(String content, boolean truncated, String reason) {

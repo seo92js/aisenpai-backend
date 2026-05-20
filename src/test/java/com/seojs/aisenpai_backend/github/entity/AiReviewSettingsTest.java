@@ -41,6 +41,7 @@ class AiReviewSettingsTest {
         assertTrue(prompt.contains("\"path\""));
         assertTrue(prompt.contains("\"body\""));
         assertTrue(prompt.contains("comments에는 changedFiles.patch의 추가된 라인"));
+        assertTrue(prompt.contains("테스트 파일 부재나 테스트 누락을 단정하지 마세요"));
     }
 
 }
