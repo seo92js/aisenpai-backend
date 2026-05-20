@@ -321,6 +321,7 @@ public class PullRequestService {
             List<ChangedFileDto> changedFiles) {
         List<ReviewCommentDto> enrichedComments = new java.util.ArrayList<>();
         int anchoredCount = 0;
+        int discardedCount = 0;
         for (var comment : comments) {
             String filePatch = changedFiles.stream()
                     .filter(f -> f.getFilename().equals(comment.getPath()))
@@ -332,17 +333,18 @@ public class PullRequestService {
                     : null;
             if (line != null) {
                 anchoredCount++;
+                enrichedComments.add(ReviewCommentDto.builder()
+                        .path(comment.getPath())
+                        .codeSnippet(comment.getCodeSnippet())
+                        .line(line)
+                        .side("RIGHT")
+                        .body(comment.getBody())
+                        .build());
+            } else {
+                discardedCount++;
             }
-
-            enrichedComments.add(ReviewCommentDto.builder()
-                    .path(comment.getPath())
-                    .codeSnippet(comment.getCodeSnippet())
-                    .line(line)
-                    .side(line != null ? "RIGHT" : null)
-                    .body(comment.getBody())
-                    .build());
         }
-        log.info("Review anchor result: anchored={}, fallback={}", anchoredCount, comments.size() - anchoredCount);
+        log.info("Review anchor result: anchored={}, discarded={}", anchoredCount, discardedCount);
         return enrichedComments;
     }
 
@@ -395,10 +397,11 @@ public class PullRequestService {
             }
         }
 
-        boolean shouldFallbackAllComments = inlinePostFailed;
-        List<ReviewCommentDto> fallbackComments = enrichedComments.stream()
-                .filter(c -> shouldFallbackAllComments || c.getLine() == null || !isValidReviewComment(c))
-                .toList();
+        List<ReviewCommentDto> fallbackComments = inlinePostFailed
+                ? enrichedComments.stream()
+                        .filter(c -> c.getLine() != null && isValidReviewComment(c))
+                        .toList()
+                : List.of();
 
         if (inlinePostFailed) {
             manualFallback.append("### 인라인 리뷰 게시 실패\n");
