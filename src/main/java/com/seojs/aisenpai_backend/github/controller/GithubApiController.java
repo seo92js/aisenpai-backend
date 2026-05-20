@@ -3,7 +3,9 @@ package com.seojs.aisenpai_backend.github.controller;
 import com.seojs.aisenpai_backend.github.dto.GitRepositoryWithWebhookResponseDto;
 import com.seojs.aisenpai_backend.github.dto.OpenAiKeyDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewSettingsDto;
+import com.seojs.aisenpai_backend.github.service.GithubRepositoryAccessService;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -19,6 +21,8 @@ import java.util.List;
 @RequestMapping("/api/github")
 public class GithubApiController {
     private final GithubService githubService;
+    private final RepositoryAiSettingsService repositoryAiSettingsService;
+    private final GithubRepositoryAccessService repositoryAccessService;
     private final OAuth2AuthorizedClientService authorizedClientService;
     private final PullRequestService pullRequestService;
 
@@ -67,52 +71,59 @@ public class GithubApiController {
     }
 
     @PostMapping("/register")
-    public void registerWebhook(@AuthenticationPrincipal OAuth2User principal, @RequestParam String repository) {
+    public void registerWebhook(@AuthenticationPrincipal OAuth2User principal, @RequestParam String owner,
+            @RequestParam String repository) {
         OAuth2AuthorizedClient authorizedClient = authorizedClientService.loadAuthorizedClient("github",
                 principal.getName());
         String accessToken = authorizedClient.getAccessToken().getTokenValue();
-        String owner = principal.getAttribute("login");
+        String requesterLogin = principal.getAttribute("login");
 
-        githubService.registerWebhook(accessToken, owner, repository);
+        githubService.registerWebhook(accessToken, requesterLogin, owner, repository);
     }
 
     @GetMapping("/review-settings")
-    public ReviewSettingsDto getReviewSettings(@AuthenticationPrincipal OAuth2User principal) {
-        String owner = principal.getAttribute("login");
-        return githubService.getReviewSettings(owner);
+    public ReviewSettingsDto getReviewSettings(@AuthenticationPrincipal OAuth2User principal,
+            @RequestParam String owner, @RequestParam String repository) {
+        Long repositoryId = repositoryAccessService.resolveRepositoryId(principal, owner, repository);
+        return repositoryAiSettingsService.getReviewSettings(repositoryId);
     }
 
     @PatchMapping("/review-settings")
     public Long updateReviewSettings(@AuthenticationPrincipal OAuth2User principal,
-            @RequestBody ReviewSettingsDto dto) {
-        String owner = principal.getAttribute("login");
-        return githubService.updateReviewSettings(owner, dto);
+            @RequestParam String owner, @RequestParam String repository, @RequestBody ReviewSettingsDto dto) {
+        Long repositoryId = repositoryAccessService.requireAdminRepositoryId(principal, owner, repository,
+                "Repository admin permission is required to update AI settings.");
+        return repositoryAiSettingsService.updateReviewSettings(repositoryId, dto);
     }
 
     @GetMapping("/ignore")
-    public List<String> getIgnorePatterns(@AuthenticationPrincipal OAuth2User principal) {
-        String owner = principal.getAttribute("login");
-        return githubService.getIgnorePatterns(owner);
+    public List<String> getIgnorePatterns(@AuthenticationPrincipal OAuth2User principal,
+            @RequestParam String owner, @RequestParam String repository) {
+        Long repositoryId = repositoryAccessService.resolveRepositoryId(principal, owner, repository);
+        return repositoryAiSettingsService.getIgnorePatterns(repositoryId);
     }
 
     @PatchMapping("/ignore")
     public Long updateIgnorePatterns(@AuthenticationPrincipal OAuth2User principal,
-            @RequestBody List<String> patterns) {
-        String owner = principal.getAttribute("login");
-        return githubService.updateIgnorePatterns(owner, patterns);
+            @RequestParam String owner, @RequestParam String repository, @RequestBody List<String> patterns) {
+        Long repositoryId = repositoryAccessService.requireAdminRepositoryId(principal, owner, repository,
+                "Repository admin permission is required to update AI settings.");
+        return repositoryAiSettingsService.updateIgnorePatterns(repositoryId, patterns);
     }
 
     @PatchMapping("/openai")
-    public Long updateOpenAiKey(@AuthenticationPrincipal OAuth2User principal, @RequestBody OpenAiKeyDto dto) {
-        String owner = principal.getAttribute("login");
-        String key = dto.getKey();
-        return githubService.updateOpenAiKey(owner, key);
+    public Long updateOpenAiKey(@AuthenticationPrincipal OAuth2User principal, @RequestParam String owner,
+            @RequestParam String repository, @RequestBody OpenAiKeyDto dto) {
+        Long repositoryId = repositoryAccessService.requireAdminRepositoryId(principal, owner, repository,
+                "Repository admin permission is required to update AI settings.");
+        return repositoryAiSettingsService.updateOpenAiKey(repositoryId, dto.getKey());
     }
 
     @GetMapping("/openai")
-    public String getOpenAiKey(@AuthenticationPrincipal OAuth2User principal) {
-        String owner = principal.getAttribute("login");
-        return githubService.getMaskedOpenAiKey(owner);
+    public String getOpenAiKey(@AuthenticationPrincipal OAuth2User principal,
+            @RequestParam String owner, @RequestParam String repository) {
+        Long repositoryId = repositoryAccessService.resolveRepositoryId(principal, owner, repository);
+        return repositoryAiSettingsService.getMaskedOpenAiKey(repositoryId);
     }
 
     @PostMapping("/openai/validate")

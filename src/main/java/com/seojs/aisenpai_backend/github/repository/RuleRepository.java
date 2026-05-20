@@ -8,5 +8,5 @@ import java.util.List;
 
 @Repository
 public interface RuleRepository extends JpaRepository<Rule, Long> {
-    List<Rule> findBySettingsId(Long settingsId);
+    List<Rule> findByRepositorySettingsId(Long repositorySettingsId);
 }

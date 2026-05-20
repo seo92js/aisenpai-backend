@@ -1,6 +1,7 @@
 package com.seojs.aisenpai_backend.pullrequest.controller;
 
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.service.GithubRepositoryAccessService;
 import com.seojs.aisenpai_backend.pullrequest.dto.PullRequestResponseDto;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ import java.util.List;
 public class PullRequestApiController {
         private final PullRequestService pullRequestService;
         private final OAuth2AuthorizedClientService authorizedClientService;
+        private final GithubRepositoryAccessService repositoryAccessService;
 
         @GetMapping
         public List<PullRequestResponseDto> getPullRequestList(
@@ -54,6 +56,7 @@ public class PullRequestApiController {
                 OAuth2AuthorizedClient authorizedClient = authorizedClientService.loadAuthorizedClient("github",
                                 principal.getName());
                 String accessToken = authorizedClient.getAccessToken().getTokenValue();
+                repositoryAccessService.requireReviewRequestPermission(accessToken, owner, repo);
 
                 pullRequestService.review(owner, repo, prNumber, accessToken, model);
         }

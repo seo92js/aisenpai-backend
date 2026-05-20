@@ -2,29 +2,31 @@ package com.seojs.aisenpai_backend.github.entity;
 
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-
 import static org.junit.jupiter.api.Assertions.*;
 
-class AiReviewSettingsTest {
+class RepositoryAiSettingsTest {
 
     @Test
     void buildSystemPrompt_룰적용_확인() {
         // given
-        AiReviewSettings settings = AiReviewSettings.builder()
+        RepositoryAiSettings settings = RepositoryAiSettings.builder()
+                .repositoryId(1L)
+                .owner("owner")
+                .repositoryName("repo")
+                .webhookSecret("secret")
                 .build();
 
         Rule rule1 = Rule.builder()
-                .settings(settings)
+                .repositorySettings(settings)
                 .content("DTO에는 @Builder 필수")
                 .isEnabled(true)
                 .targetFilePattern("*.java")
                 .build();
 
         Rule rule2 = Rule.builder()
-                .settings(settings)
+                .repositorySettings(settings)
                 .content("console.log 금지")
-                .isEnabled(false) // 비활성화
+                .isEnabled(false)
                 .targetFilePattern("*.ts")
                 .build();
 
@@ -51,5 +53,4 @@ class AiReviewSettingsTest {
         assertTrue(prompt.contains("comments는 빈 배열"));
         assertTrue(prompt.contains("테스트 파일 부재나 테스트 누락을 단정하지 마세요"));
     }
-
 }

@@ -2,7 +2,7 @@ package com.seojs.aisenpai_backend.github.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.seojs.aisenpai_backend.github.entity.GithubAccount;
+import com.seojs.aisenpai_backend.github.repository.RepositoryAiSettingsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,7 +16,7 @@ import java.security.MessageDigest;
 @Service
 @Slf4j
 public class WebhookSecurityService {
-    private final GithubService githubService;
+    private final RepositoryAiSettingsRepository repositoryAiSettingsRepository;
     private final ObjectMapper objectMapper;
     
     /**
@@ -24,20 +24,21 @@ public class WebhookSecurityService {
      */
     public void validateWebhookSignature(String payload, String signature) {
         try {
-            // 페이로드에서 repository 소유자 추출
             JsonNode payloadJson = objectMapper.readTree(payload);
-            String repositoryFullName = payloadJson.path("repository").path("full_name").asText();
-            
-            if (repositoryFullName.isEmpty()) {
+            Long repositoryId = payloadJson.path("repository").path("id").isMissingNode()
+                    ? null
+                    : payloadJson.path("repository").path("id").asLong();
+
+            if (repositoryId == null || repositoryId == 0L) {
                 throw new SecurityException("Repository information not found in webhook payload");
             }
-            
-            String owner = repositoryFullName.split("/")[0];
-            
-            GithubAccount account = githubService.findByLoginIdOrThrow(owner);
+
+            String webhookSecret = repositoryAiSettingsRepository.findByRepositoryId(repositoryId)
+                    .orElseThrow(() -> new SecurityException("Repository webhook settings not found"))
+                    .getWebhookSecret();
 
             // 사용자별 웹훅 시크릿으로 검증
-            isValidWebhookSignature(payload, signature, account.getWebhookSecret());
+            isValidWebhookSignature(payload, signature, webhookSecret);
             
         } catch (Exception e) {
             log.error("Webhook signature validation failed: {}", e.getMessage());

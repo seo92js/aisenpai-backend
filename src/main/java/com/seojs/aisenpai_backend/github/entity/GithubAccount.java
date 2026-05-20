@@ -20,33 +20,8 @@ public class GithubAccount {
     @Column(nullable = false)
     private String webhookSecret;
 
-    @OneToOne(mappedBy = "githubAccount", cascade = CascadeType.ALL, orphanRemoval = true)
-    private AiReviewSettings aiSettings;
-
     public void updateAccessToken(String accessToken) {
         this.accessToken = accessToken;
-    }
-
-    /**
-     * AiReviewSettings 설정
-     */
-    public void initializeAiSettings() {
-        if (this.aiSettings == null) {
-            this.aiSettings = AiReviewSettings.builder()
-                    .githubAccount(this)
-                    .build();
-        }
-    }
-
-    /**
-     * AiReviewSettings 안전하게 가져오기
-     * 설정이 없으면 새로 생성하고 초기화
-     */
-    public AiReviewSettings getAiSettings() {
-        if (this.aiSettings == null) {
-            initializeAiSettings();
-        }
-        return this.aiSettings;
     }
 
     @Builder

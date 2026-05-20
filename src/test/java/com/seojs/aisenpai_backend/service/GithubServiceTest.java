@@ -6,14 +6,11 @@ import com.seojs.aisenpai_backend.exception.GithubRateLimitEx;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
 import com.seojs.aisenpai_backend.github.dto.GithubContentResponseDto;
 import com.seojs.aisenpai_backend.github.dto.GitRepositoryResponseDto;
-import com.seojs.aisenpai_backend.github.dto.ReviewSettingsDto;
 import com.seojs.aisenpai_backend.github.dto.WebhookResponseDto;
-import com.seojs.aisenpai_backend.github.entity.DetailLevel;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
-import com.seojs.aisenpai_backend.github.entity.ReviewFocus;
-import com.seojs.aisenpai_backend.github.entity.ReviewTone;
 import com.seojs.aisenpai_backend.github.repository.GithubAccountRepository;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -67,6 +64,9 @@ class GithubServiceTest {
     @Mock
     private AiService aiService;
 
+    @Mock
+    private RepositoryAiSettingsService repositoryAiSettingsService;
+
     private Executor githubApiExecutor = Runnable::run;
 
     private GithubService githubService;
@@ -92,7 +92,7 @@ class GithubServiceTest {
         when(requestBodySpec.bodyValue(any())).thenReturn(requestHeadersSpec);
 
         githubService = new GithubService(webClientBuilder, githubAccountRepository, tokenEncryptionService,
-                        pullRequestRepository, aiService, githubApiExecutor);
+                        pullRequestRepository, aiService, repositoryAiSettingsService, githubApiExecutor);
         ReflectionTestUtils.setField(githubService, "webhookUrl", "http://test.com/webhook");
     }
 
@@ -112,6 +112,7 @@ class GithubServiceTest {
         // then
         assertEquals(2, result.size());
         verify(webClientBuilder).build();
+        verify(requestHeadersUriSpec).uri(any(Function.class));
     }
 
     @Test
@@ -177,8 +178,6 @@ class GithubServiceTest {
 
         List<GitRepositoryResponseDto> repos = Arrays.asList(repo1, repo2);
 
-        when(requestHeadersUriSpec.uri("https://api.github.com/user/repos"))
-                .thenReturn(requestHeadersSpec);
         when(responseSpec.bodyToFlux(GitRepositoryResponseDto.class)).thenReturn(Flux.fromIterable(repos));
         when(responseSpec.bodyToFlux(WebhookResponseDto.class)).thenReturn(Flux.empty());
 
@@ -187,7 +186,7 @@ class GithubServiceTest {
         WebClient.ResponseSpec specificResponseSpec = mock(WebClient.ResponseSpec.class);
 
         when(webClient.get()).thenReturn(specificUriSpec);
-        when(specificUriSpec.uri("https://api.github.com/user/repos")).thenReturn(specificHeadersSpec);
+        when(specificUriSpec.uri(any(Function.class))).thenReturn(specificHeadersSpec);
         when(specificHeadersSpec.header(anyString(), anyString())).thenReturn(specificHeadersSpec);
         when(specificHeadersSpec.retrieve()).thenReturn(specificResponseSpec);
         when(specificResponseSpec.bodyToFlux(GitRepositoryResponseDto.class))
@@ -220,6 +219,10 @@ class GithubServiceTest {
                 .build();
 
         when(githubAccountRepository.findByLoginId(owner)).thenReturn(Optional.of(mockAccount));
+        GitRepositoryResponseDto repositoryInfo = new GitRepositoryResponseDto();
+        ReflectionTestUtils.setField(repositoryInfo, "id", 1L);
+        repositoryInfo.setPermissions(Map.of("admin", true));
+        when(responseSpec.bodyToMono(GitRepositoryResponseDto.class)).thenReturn(Mono.just(repositoryInfo));
 
         when(responseSpec.bodyToFlux(WebhookResponseDto.class)).thenReturn(Flux.empty());
 
@@ -227,11 +230,12 @@ class GithubServiceTest {
         when(responseSpec.toBodilessEntity()).thenReturn(Mono.empty());
 
         // when
-        githubService.registerWebhook(accessToken, owner, repo);
+        githubService.registerWebhook(accessToken, owner, owner, repo);
 
         // then
         verify(webClient).post();
         verify(githubAccountRepository).findByLoginId(owner);
+        verify(repositoryAiSettingsService).registerWebhookSettings(1L, owner, repo, mockAccount);
     }
 
     @Test
@@ -325,100 +329,9 @@ class GithubServiceTest {
                 () -> githubService.getChangedFiles("token", "owner", "repo", 1));
     }
 
-    @Test
-    void getReviewSettings_성공() {
-        // given
-        String loginId = "test-user";
-
-        GithubAccount account = GithubAccount.builder()
-                .loginId(loginId)
-                .accessToken("test-token")
-                .webhookSecret("test-secret")
-                .build();
-
-        when(githubAccountRepository.findByLoginId(loginId))
-                .thenReturn(Optional.of(account));
-
-        // when
-        var result = githubService.getReviewSettings(loginId);
-
-        // then
-        assertEquals(ReviewTone.NEUTRAL, result.getTone());
-        assertEquals(ReviewFocus.BOTH, result.getFocus());
-        assertEquals(DetailLevel.STANDARD, result.getDetailLevel());
-
-        verify(githubAccountRepository).findByLoginId(loginId);
-    }
-
     private ChangedFileDto changedFile(String filename) {
         return new ChangedFileDto(filename, "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents",
                 "@@ -1 +1 @@\n+line");
-    }
-
-    @Test
-    void getReviewSettings_계정없을시_예외발생() {
-        // given
-        String loginId = "non-existent-user";
-
-        when(githubAccountRepository.findByLoginId(loginId))
-                .thenReturn(Optional.empty());
-
-        // when & then
-        GithubAccountNotFoundEx exception = assertThrows(GithubAccountNotFoundEx.class,
-                () -> githubService.getReviewSettings(loginId));
-
-        assertEquals("GithubAccount not found for loginId: " + loginId, exception.getMessage());
-    }
-
-    @Test
-    void updateReviewSettings_성공() {
-        // given
-        String loginId = "test-user";
-        Long expectedId = 1L;
-
-        GithubAccount account = GithubAccount.builder()
-                .loginId(loginId)
-                .accessToken("test-token")
-                .webhookSecret("test-secret")
-                .build();
-        ReflectionTestUtils.setField(account, "id", expectedId);
-
-        when(githubAccountRepository.findByLoginId(loginId))
-                .thenReturn(Optional.of(account));
-
-        ReviewSettingsDto dto = new ReviewSettingsDto(
-                ReviewTone.FRIENDLY,
-                ReviewFocus.PRAISE_ONLY,
-                DetailLevel.DETAILED,
-                true,
-                false,
-                "gpt-4o-mini");
-
-        // when
-        Long result = githubService.updateReviewSettings(loginId, dto);
-
-        // then
-        assertEquals(expectedId, result);
-        assertEquals(ReviewTone.FRIENDLY, account.getAiSettings().getReviewTone());
-    }
-
-    @Test
-    void updateReviewSettings_계정없을시_예외발생() {
-        // given
-        String loginId = "non-existent-user";
-        ReviewSettingsDto dto = new ReviewSettingsDto(
-                ReviewTone.STRICT, ReviewFocus.IMPROVEMENT_ONLY, DetailLevel.CONCISE, false,
-                false,
-                "gpt-4o-mini");
-
-        when(githubAccountRepository.findByLoginId(loginId))
-                .thenReturn(Optional.empty());
-
-        // when & then
-        GithubAccountNotFoundEx exception = assertThrows(GithubAccountNotFoundEx.class,
-                () -> githubService.updateReviewSettings(loginId, dto));
-
-        assertEquals("GithubAccount not found for loginId: " + loginId, exception.getMessage());
     }
 
     @Test

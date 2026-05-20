@@ -1,7 +1,9 @@
 package com.seojs.aisenpai_backend.github.entity;
 
 import jakarta.persistence.*;
-import lombok.*;
+import lombok.Builder;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -11,14 +13,37 @@ import java.util.List;
 @Getter
 @NoArgsConstructor
 @Entity
-public class AiReviewSettings {
+@Table(uniqueConstraints = @UniqueConstraint(name = "uk_repository_ai_settings_repo", columnNames = "repository_id"))
+public class RepositoryAiSettings {
+
+    private static final String DEFAULT_MODEL = "gpt-4o-mini";
+    private static final String DEFAULT_IGNORE_PATTERNS = "package-lock.json, yarn.lock, *.lock, .env*, *.pem, *.key, .yml, .yaml";
+
     @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @OneToOne
-    @MapsId
-    @JoinColumn(name = "id")
-    private GithubAccount githubAccount;
+    @Column(name = "repository_id", nullable = false)
+    private Long repositoryId;
+
+    @Column(nullable = false)
+    private String owner;
+
+    @Column(nullable = false)
+    private String repositoryName;
+
+    @Column(nullable = false)
+    private String webhookSecret;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "webhook_registered_by_id")
+    private GithubAccount webhookRegisteredBy;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "posting_account_id")
+    private GithubAccount postingAccount;
+
+    private String postingAccountLogin;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -32,11 +57,11 @@ public class AiReviewSettings {
     @Column(nullable = false)
     private DetailLevel detailLevel = DetailLevel.STANDARD;
 
-    @OneToMany(mappedBy = "settings", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "repositorySettings", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Rule> rules = new ArrayList<>();
 
     @Column(length = 1000)
-    private String ignorePatterns;
+    private String ignorePatterns = DEFAULT_IGNORE_PATTERNS;
 
     @Column
     private String openAiKey;
@@ -48,28 +73,40 @@ public class AiReviewSettings {
     private Boolean autoPostToGithub = false;
 
     @Column(nullable = false)
-    private String openaiModel = "gpt-4o-mini";
+    private String openaiModel = DEFAULT_MODEL;
 
     @Builder
-    public AiReviewSettings(GithubAccount githubAccount) {
-        this.githubAccount = githubAccount;
-        this.reviewTone = ReviewTone.NEUTRAL;
-        this.reviewFocus = ReviewFocus.BOTH;
-        this.detailLevel = DetailLevel.STANDARD;
-        this.autoReviewEnabled = false;
-        this.autoPostToGithub = false;
-        this.openaiModel = "gpt-4o-mini";
-        this.ignorePatterns = "package-lock.json, yarn.lock, *.lock, .env*, *.pem, *.key, .yml, .yaml";
+    public RepositoryAiSettings(Long repositoryId, String owner, String repositoryName, String webhookSecret,
+            GithubAccount webhookRegisteredBy, GithubAccount postingAccount) {
+        this.repositoryId = repositoryId;
+        this.owner = owner;
+        this.repositoryName = repositoryName;
+        this.webhookSecret = webhookSecret;
+        this.webhookRegisteredBy = webhookRegisteredBy;
+        this.postingAccount = postingAccount;
+        this.postingAccountLogin = postingAccount != null ? postingAccount.getLoginId() : null;
+    }
+
+    public void updateRepository(String owner, String repositoryName) {
+        this.owner = owner;
+        this.repositoryName = repositoryName;
+    }
+
+    public void updateWebhookRegistration(GithubAccount account, String webhookSecret) {
+        this.webhookRegisteredBy = account;
+        this.postingAccount = account;
+        this.postingAccountLogin = account != null ? account.getLoginId() : null;
+        this.webhookSecret = webhookSecret;
     }
 
     public void updateReviewSettings(ReviewTone tone, ReviewFocus focus, DetailLevel detailLevel,
             Boolean autoReviewEnabled, Boolean autoPostToGithub, String openaiModel) {
-        this.reviewTone = tone;
-        this.reviewFocus = focus;
-        this.detailLevel = detailLevel;
+        this.reviewTone = tone != null ? tone : ReviewTone.NEUTRAL;
+        this.reviewFocus = focus != null ? focus : ReviewFocus.BOTH;
+        this.detailLevel = detailLevel != null ? detailLevel : DetailLevel.STANDARD;
         this.autoReviewEnabled = autoReviewEnabled != null ? autoReviewEnabled : false;
         this.autoPostToGithub = autoPostToGithub != null ? autoPostToGithub : false;
-        this.openaiModel = openaiModel != null ? openaiModel : "gpt-4o-mini";
+        this.openaiModel = openaiModel != null ? openaiModel : DEFAULT_MODEL;
     }
 
     public void updateIgnorePatterns(String ignorePatterns) {
@@ -87,9 +124,15 @@ public class AiReviewSettings {
         return Arrays.asList(this.ignorePatterns.split("\\s*,\\s*"));
     }
 
-    /**
-     * 설정된 옵션들을 조합하여 최종 시스템 프롬프트를 생성
-     */
+    public List<Rule> getActiveRules() {
+        if (this.rules == null) {
+            return List.of();
+        }
+        return this.rules.stream()
+                .filter(Rule::isEnabled)
+                .toList();
+    }
+
     public String buildSystemPrompt() {
         StringBuilder sb = new StringBuilder();
         sb.append("당신은 시니어 코드 리뷰어입니다.\n\n");
@@ -109,30 +152,27 @@ public class AiReviewSettings {
         sb.append("### 상세 수준\n");
         sb.append(this.detailLevel.getPrompt()).append("\n\n");
 
-        if (this.rules != null && !this.rules.isEmpty()) {
-            List<String> activeRules = this.rules.stream()
-                    .filter(Rule::isEnabled)
-                    .map(rule -> {
-                        String prefix = (rule.getTargetFilePattern() != null && !rule.getTargetFilePattern().isBlank())
-                                ? "[Target: " + rule.getTargetFilePattern() + "] "
-                                : "";
-                        return "- " + prefix + rule.getContent();
-                    })
-                    .toList();
+        List<String> activeRules = getActiveRules().stream()
+                .map(rule -> {
+                    String prefix = (rule.getTargetFilePattern() != null && !rule.getTargetFilePattern().isBlank())
+                            ? "[Target: " + rule.getTargetFilePattern() + "] "
+                            : "";
+                    return "- " + prefix + rule.getContent();
+                })
+                .toList();
 
-            if (!activeRules.isEmpty()) {
-                sb.append("### 코드 리뷰 규칙\n");
-                sb.append("중요: 규칙 적용 시 반드시 아래 체크리스트를 따르세요:\n");
-                sb.append("1. 해당 규칙의 Target 패턴이 변경된 파일과 매칭되는가?\n");
-                sb.append("2. 변경된 코드(diff의 + 라인)에서 실제로 규칙 위반이 발견되었는가?\n");
-                sb.append("3. 위 두 조건이 모두 YES일 때만 해당 규칙에 대한 코멘트를 작성하세요.\n");
-                sb.append("4. 조건을 충족하지 않으면 규칙 관련 코멘트를 작성하지 마세요.\n\n");
-                activeRules.forEach(rule -> sb.append(rule).append("\n"));
-                sb.append("\n");
-                sb.append("### 잘못된 리뷰 예시 (이렇게 하지 마세요)\n");
-                sb.append("- Target 파일이지만 규칙 위반 코드가 없는데 '주의하세요' 류의 코멘트\n");
-                sb.append("- 변경되지 않은 기존 코드에 대한 규칙 적용\n\n");
-            }
+        if (!activeRules.isEmpty()) {
+            sb.append("### 코드 리뷰 규칙\n");
+            sb.append("중요: 규칙 적용 시 반드시 아래 체크리스트를 따르세요:\n");
+            sb.append("1. 해당 규칙의 Target 패턴이 변경된 파일과 매칭되는가?\n");
+            sb.append("2. 변경된 코드(diff의 + 라인)에서 실제로 규칙 위반이 발견되었는가?\n");
+            sb.append("3. 위 두 조건이 모두 YES일 때만 해당 규칙에 대한 코멘트를 작성하세요.\n");
+            sb.append("4. 조건을 충족하지 않으면 규칙 관련 코멘트를 작성하지 마세요.\n\n");
+            activeRules.forEach(rule -> sb.append(rule).append("\n"));
+            sb.append("\n");
+            sb.append("### 잘못된 리뷰 예시 (이렇게 하지 마세요)\n");
+            sb.append("- Target 파일이지만 규칙 위반 코드가 없는데 '주의하세요' 류의 코멘트\n");
+            sb.append("- 변경되지 않은 기존 코드에 대한 규칙 적용\n\n");
         }
 
         sb.append("### 응답 형식 (매우 중요)\n");
