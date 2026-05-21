@@ -5,6 +5,7 @@ import com.seojs.aisenpai_backend.github.dto.OpenAiKeyDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewSettingsDto;
 import com.seojs.aisenpai_backend.github.service.GithubRepositoryAccessService;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryCacheService;
 import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class GithubApiController {
     private final GithubService githubService;
     private final RepositoryAiSettingsService repositoryAiSettingsService;
     private final GithubRepositoryAccessService repositoryAccessService;
+    private final RepositoryCacheService repositoryCacheService;
     private final OAuth2AuthorizedClientService authorizedClientService;
     private final PullRequestService pullRequestService;
 
@@ -58,7 +60,7 @@ public class GithubApiController {
         OAuth2AuthorizedClient authorizedClient = authorizedClientService.loadAuthorizedClient("github",
                 principal.getName());
         String accessToken = authorizedClient.getAccessToken().getTokenValue();
-        githubService.evictRepositoryCache(accessToken);
+        repositoryCacheService.evictByAccessToken(accessToken);
     }
 
     @PostMapping("/webhook/")

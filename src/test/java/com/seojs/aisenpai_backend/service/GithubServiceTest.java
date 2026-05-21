@@ -10,6 +10,7 @@ import com.seojs.aisenpai_backend.github.dto.WebhookResponseDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.repository.GithubAccountRepository;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryCacheService;
 import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
@@ -67,6 +68,9 @@ class GithubServiceTest {
     @Mock
     private RepositoryAiSettingsService repositoryAiSettingsService;
 
+    @Mock
+    private RepositoryCacheService repositoryCacheService;
+
     private Executor githubApiExecutor = Runnable::run;
 
     private GithubService githubService;
@@ -92,7 +96,8 @@ class GithubServiceTest {
         when(requestBodySpec.bodyValue(any())).thenReturn(requestHeadersSpec);
 
         githubService = new GithubService(webClientBuilder, githubAccountRepository, tokenEncryptionService,
-                        pullRequestRepository, aiService, repositoryAiSettingsService, githubApiExecutor);
+                        pullRequestRepository, aiService, repositoryAiSettingsService, repositoryCacheService,
+                        githubApiExecutor);
         ReflectionTestUtils.setField(githubService, "webhookUrl", "http://test.com/webhook");
     }
 
@@ -236,6 +241,7 @@ class GithubServiceTest {
         verify(webClient).post();
         verify(githubAccountRepository).findByLoginId(owner);
         verify(repositoryAiSettingsService).registerWebhookSettings(1L, owner, repo, mockAccount);
+        verify(repositoryCacheService).evictAll();
     }
 
     @Test

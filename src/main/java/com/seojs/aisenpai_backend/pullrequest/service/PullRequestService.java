@@ -15,6 +15,7 @@ import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.entity.RepositoryAiSettings;
 import com.seojs.aisenpai_backend.github.service.GithubService;
+import com.seojs.aisenpai_backend.github.service.RepositoryCacheService;
 import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
@@ -54,6 +55,7 @@ public class PullRequestService {
     private final ReviewContextService reviewContextService;
     private final ReviewFindingValidationService reviewFindingValidationService;
     private final RepositoryAiSettingsService repositoryAiSettingsService;
+    private final RepositoryCacheService repositoryCacheService;
 
     private record ReviewProcessingResult(
             String accessToken,
@@ -537,20 +539,7 @@ public class PullRequestService {
         }
 
         repositoryAiSettingsService.getOrCreatePlaceholder(repoId, owner, repoName);
-        repositoryAiSettingsService.getRequired(repoId).getPostingAccount();
-        String cacheLogin = repositoryAiSettingsService.getRequired(repoId).getPostingAccountLogin();
-        evictRepositoryCache(cacheLogin != null ? cacheLogin : owner);
-    }
-
-    private void evictRepositoryCache(String loginId) {
-        try {
-            String accessToken = githubService.findAccessTokenByLoginId(loginId);
-            if (accessToken != null) {
-                githubService.evictRepositoryCache(accessToken);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to evict repository cache for loginId {}: {}", loginId, e.getMessage());
-        }
+        repositoryCacheService.evictAllAfterCommit();
     }
 
     /**
