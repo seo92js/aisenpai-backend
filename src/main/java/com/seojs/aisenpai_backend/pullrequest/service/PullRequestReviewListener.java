@@ -52,13 +52,13 @@ public class PullRequestReviewListener {
             String userPrompt = objectMapper.writeValueAsString(aiPayload);
             String review = aiService.callAiChat(openApiKey, systemPrompt, userPrompt, model, null);
             pullRequestService.updateAiReview(repositoryId, prNumber, review, ReviewStatus.COMPLETED,
-                    dto.getReviewStartedHeadSha());
+                    dto.getReviewStartedHeadSha(), dto.getReviewRunId());
         } catch (Exception e) {
             String failureCode = ReviewFailureClassifier.codeFor(e);
             String failureMessage = ReviewFailureClassifier.messageFor(e);
             log.error("AI review failed. repositoryId={}, pr={}, reason={}", repositoryId, prNumber, failureCode, e);
             pullRequestService.updateAiReview(repositoryId, prNumber, failureMessage, ReviewStatus.FAILED,
-                    dto.getReviewStartedHeadSha());
+                    dto.getReviewStartedHeadSha(), dto.getReviewRunId());
         }
     }
 }
