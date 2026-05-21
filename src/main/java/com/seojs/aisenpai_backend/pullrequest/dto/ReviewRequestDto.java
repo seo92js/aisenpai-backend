@@ -17,6 +17,7 @@ public class ReviewRequestDto {
     private String encryptedOpenAiKey;
     private String repositoryTree;
     private String reviewStartedHeadSha;
+    private String reviewRunId;
     private ReviewContextDto reviewContext;
 
     public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
@@ -32,6 +33,13 @@ public class ReviewRequestDto {
     public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
             String systemPrompt, String encryptedOpenAiKey, String repositoryTree, String reviewStartedHeadSha,
             ReviewContextDto reviewContext) {
+        this(repositoryId, prNumber, changedFiles, model, systemPrompt, encryptedOpenAiKey, repositoryTree,
+                reviewStartedHeadSha, null, reviewContext);
+    }
+
+    public ReviewRequestDto(Long repositoryId, Integer prNumber, List<ChangedFileDto> changedFiles, String model,
+            String systemPrompt, String encryptedOpenAiKey, String repositoryTree, String reviewStartedHeadSha,
+            String reviewRunId, ReviewContextDto reviewContext) {
         this.repositoryId = repositoryId;
         this.prNumber = prNumber;
         this.changedFiles = changedFiles;
@@ -40,6 +48,7 @@ public class ReviewRequestDto {
         this.encryptedOpenAiKey = encryptedOpenAiKey;
         this.repositoryTree = repositoryTree;
         this.reviewStartedHeadSha = reviewStartedHeadSha;
+        this.reviewRunId = reviewRunId;
         this.reviewContext = reviewContext;
     }
 }

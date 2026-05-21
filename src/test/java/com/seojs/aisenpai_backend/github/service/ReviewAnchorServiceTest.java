@@ -1,5 +1,6 @@
 package com.seojs.aisenpai_backend.github.service;
 
+import com.seojs.aisenpai_backend.github.service.ReviewAnchorService.AnchorFailureReason;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -59,5 +60,34 @@ class ReviewAnchorServiceTest {
 
         // then
         assertNull(lineNumber);
+    }
+
+    @Test
+    void findAnchor_MultilineSnippet_ReturnsFailureReason() {
+        // given
+        String patch = """
+                @@ -1,3 +1,5 @@
+                 class Example {
+                +    private final String name;
+                +    private final String token;
+                 }
+                """;
+
+        // when
+        var result = reviewAnchorService.findAnchor(patch, "private final String name;\nprivate final String token;");
+
+        // then
+        assertNull(result.line());
+        assertEquals(AnchorFailureReason.MULTILINE_SNIPPET_MISMATCH, result.failureReason());
+    }
+
+    @Test
+    void findAnchor_MissingPatch_ReturnsFailureReason() {
+        // when
+        var result = reviewAnchorService.findAnchor(null, "private final String name;");
+
+        // then
+        assertNull(result.line());
+        assertEquals(AnchorFailureReason.MISSING_PATCH, result.failureReason());
     }
 }

@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,4 +28,7 @@ public interface PullRequestRepository extends JpaRepository<PullRequest, Long>,
      * 특정 저장소의 모든 PR 조회 (repositoryId 기준)
      */
     List<PullRequest> findByRepositoryIdOrderByUpdatedAtDesc(Long repositoryId);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    List<PullRequest> findByStatusAndUpdatedAtBefore(PullRequest.ReviewStatus status, LocalDateTime updatedAt);
 }

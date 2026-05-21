@@ -56,7 +56,7 @@ class PullRequestReviewListenerTest {
                 .relatedFiles(List.of())
                 .build();
         ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(changedFile), "gpt-4o-mini",
-                "system", "encrypted-key", "tree", "head", reviewContext);
+                "system", "encrypted-key", "tree", "head", "run-1", reviewContext);
 
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
         when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
@@ -72,14 +72,14 @@ class PullRequestReviewListenerTest {
         assertTrue(promptCaptor.getValue().contains("\"reviewContext\""));
         assertTrue(promptCaptor.getValue().contains("\"changedFiles\""));
         assertFalse(promptCaptor.getValue().contains("\"repositoryTree\":\"tree\""));
-        verify(pullRequestService).updateAiReview(1L, 1, "{}", PullRequest.ReviewStatus.COMPLETED, "head");
+        verify(pullRequestService).updateAiReview(1L, 1, "{}", PullRequest.ReviewStatus.COMPLETED, "head", "run-1");
     }
 
     @Test
     void handleReviewRequested_StoresClassifiedFailureMessage() {
         // given
         ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(), "gpt-4o-mini",
-                "system", "encrypted-key", "tree", "head", null);
+                "system", "encrypted-key", "tree", "head", "run-1", null);
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
         when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
                 .thenThrow(new ResourceAccessException("Read timed out"));
@@ -90,6 +90,6 @@ class PullRequestReviewListenerTest {
         // then
         verify(pullRequestService).updateAiReview(1L, 1,
                 "AI review failed: OpenAI 응답 시간이 초과되었습니다. 잠시 후 다시 시도해 주세요.",
-                PullRequest.ReviewStatus.FAILED, "head");
+                PullRequest.ReviewStatus.FAILED, "head", "run-1");
     }
 }

@@ -35,6 +35,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -98,6 +99,80 @@ class PullRequestServiceTest {
                 .webhookRegisteredBy(postingAccount)
                 .postingAccount(postingAccount)
                 .build();
+    }
+
+    @Test
+    void failStuckInProgressReviews_MarksOldJobsFailedAndNotifiesPostingAccount() {
+        // given
+        Long repoId = 1L;
+        GithubAccount prAccount = GithubAccount.builder().loginId("pr-author").build();
+        GithubAccount postingAccount = GithubAccount.builder().loginId("posting-user").build();
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName("repo")
+                .githubAccount(prAccount)
+                .prNumber(7)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.IN_PROGRESS)
+                .headSha("head")
+                .baseSha("base")
+                .build();
+        pr.markReviewStarted("head", "run-1");
+
+        LocalDateTime cutoff = LocalDateTime.now().minusMinutes(30);
+        when(pullRequestRepository.findByStatusAndUpdatedAtBefore(PullRequest.ReviewStatus.IN_PROGRESS, cutoff))
+                .thenReturn(List.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId))
+                .thenReturn(repositorySettings(repoId, "owner", "repo", postingAccount));
+
+        // when
+        int failedCount = pullRequestService.failStuckInProgressReviews(cutoff);
+
+        // then
+        assertEquals(1, failedCount);
+        assertEquals(PullRequest.ReviewStatus.FAILED, pr.getStatus());
+        assertEquals("head", pr.getReviewCompletedHeadSha());
+        assertNull(pr.getReviewRunId());
+        assertTrue(pr.getAiReview().contains("오래 응답하지 않아 실패 처리"));
+        verify(notificationService).createNotification(
+                postingAccount,
+                NotificationType.REVIEW_FAILED,
+                pr);
+    }
+
+    @Test
+    void updateAiReview_TimedOutJobCompletion_DoesNotOverwriteFailedStatus() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 7;
+        GithubAccount account = GithubAccount.builder().loginId("user").build();
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .prNumber(prNumber)
+                .action("opened")
+                .status(PullRequest.ReviewStatus.IN_PROGRESS)
+                .headSha("head")
+                .baseSha("base")
+                .build();
+        pr.markReviewStarted("head", "run-1");
+        pr.markReviewTimedOut("AI review failed: 리뷰 작업이 오래 응답하지 않아 실패 처리되었습니다. 다시 요청해 주세요.");
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+
+        // when
+        pullRequestService.updateAiReview(repoId, prNumber, "late success", PullRequest.ReviewStatus.COMPLETED,
+                "head", "run-1");
+
+        // then
+        assertEquals(PullRequest.ReviewStatus.FAILED, pr.getStatus());
+        assertTrue(pr.getAiReview().contains("오래 응답하지 않아 실패 처리"));
+        verify(notificationService, never()).createNotification(
+                any(GithubAccount.class),
+                eq(NotificationType.REVIEW_COMPLETE),
+                any(PullRequest.class));
     }
 
     @Test
@@ -894,6 +969,8 @@ class PullRequestServiceTest {
         assertEquals(reviewContext, event.getReviewContext());
         assertEquals("- blob: src/App.java\n", event.getRepositoryTree());
         assertEquals("head", event.getReviewStartedHeadSha());
+        assertNotNull(event.getReviewRunId());
+        assertEquals(event.getReviewRunId(), pr.getReviewRunId());
         assertEquals(PullRequest.ReviewStatus.IN_PROGRESS, pr.getStatus());
     }
 }

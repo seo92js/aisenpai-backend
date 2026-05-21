@@ -53,6 +53,8 @@ public class PullRequest {
 
     private String reviewCompletedHeadSha;
 
+    private String reviewRunId;
+
     @Column(nullable = false)
     private LocalDateTime createdAt;
 
@@ -117,9 +119,14 @@ public class PullRequest {
     }
 
     public void markReviewStarted(String startedHeadSha) {
+        markReviewStarted(startedHeadSha, null);
+    }
+
+    public void markReviewStarted(String startedHeadSha, String reviewRunId) {
         this.status = ReviewStatus.IN_PROGRESS;
         this.reviewStartedHeadSha = startedHeadSha;
         this.reviewCompletedHeadSha = null;
+        this.reviewRunId = reviewRunId;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -134,6 +141,7 @@ public class PullRequest {
         this.aiReview = aiReview;
         this.status = ReviewStatus.COMPLETED;
         this.reviewCompletedHeadSha = completedHeadSha;
+        this.reviewRunId = null;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -141,6 +149,15 @@ public class PullRequest {
         this.aiReview = aiReview;
         this.status = ReviewStatus.FAILED;
         this.reviewCompletedHeadSha = completedHeadSha;
+        this.reviewRunId = null;
+        this.updatedAt = LocalDateTime.now();
+    }
+
+    public void markReviewTimedOut(String aiReview) {
+        this.aiReview = aiReview;
+        this.status = ReviewStatus.FAILED;
+        this.reviewCompletedHeadSha = reviewStartedHeadSha;
+        this.reviewRunId = null;
         this.updatedAt = LocalDateTime.now();
     }
 
@@ -148,6 +165,7 @@ public class PullRequest {
         this.aiReview = aiReview;
         this.status = ReviewStatus.STALE;
         this.reviewCompletedHeadSha = null;
+        this.reviewRunId = null;
         this.updatedAt = LocalDateTime.now();
     }
 

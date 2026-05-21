@@ -34,10 +34,12 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 
 import com.seojs.aisenpai_backend.github.dto.GithubApiCommentDto;
 
@@ -45,6 +47,9 @@ import com.seojs.aisenpai_backend.github.dto.GithubApiCommentDto;
 @RequiredArgsConstructor
 @Service
 public class PullRequestService {
+    private static final String STUCK_REVIEW_MESSAGE =
+            "AI review failed: 리뷰 작업이 오래 응답하지 않아 실패 처리되었습니다. 다시 요청해 주세요.";
+
     private final PullRequestRepository pullRequestRepository;
     private final GithubService githubService;
     private final WebhookSecurityService webhookSecurityService;
@@ -180,7 +185,8 @@ public class PullRequestService {
                     .toList();
         }
 
-        pr.markReviewStarted(currentHeadSha);
+        String reviewRunId = UUID.randomUUID().toString();
+        pr.markReviewStarted(currentHeadSha, reviewRunId);
 
         // LLM 호출은 이벤트 리스너에서 수행
         String systemPrompt = settings.buildSystemPrompt();
@@ -218,7 +224,7 @@ public class PullRequestService {
 
         eventPublisher.publishEvent(
                 new ReviewRequestDto(repositoryId, prNumber, filteredFiles, reviewModel, systemPrompt, encryptedOpenAiKey,
-                        repositoryTreeString, currentHeadSha, reviewContext));
+                        repositoryTreeString, currentHeadSha, reviewRunId, reviewContext));
     }
 
     /**
@@ -233,7 +239,20 @@ public class PullRequestService {
     @Transactional
     public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
             ReviewStatus status, String reviewStartedHeadSha) {
+        updateAiReview(repositoryId, prNumber, aiReview, status, reviewStartedHeadSha, null);
+    }
+
+    @Transactional
+    public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
+            ReviewStatus status, String reviewStartedHeadSha, String reviewRunId) {
         PullRequest pr = findWithLockByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
+
+        if (reviewRunId != null && !reviewRunId.equals(pr.getReviewRunId())) {
+            log.info("Ignoring review completion for inactive job. repositoryId={}, pr={}, completedRun={}, "
+                            + "activeRun={}, status={}", repositoryId, prNumber, reviewRunId, pr.getReviewRunId(),
+                    pr.getStatus());
+            return;
+        }
 
         if (reviewStartedHeadSha != null && pr.getPrState() != PullRequestState.OPEN) {
             pr.markReviewStale(aiReview);
@@ -284,6 +303,33 @@ public class PullRequestService {
                     account,
                     NotificationType.REVIEW_FAILED,
                     pr);
+        }
+    }
+
+    @Transactional
+    public int failStuckInProgressReviews(LocalDateTime cutoff) {
+        List<PullRequest> stuckReviews = pullRequestRepository.findByStatusAndUpdatedAtBefore(
+                ReviewStatus.IN_PROGRESS, cutoff);
+
+        for (PullRequest pr : stuckReviews) {
+            pr.markReviewTimedOut(STUCK_REVIEW_MESSAGE);
+            notificationService.createNotification(
+                    notificationAccountFor(pr),
+                    NotificationType.REVIEW_FAILED,
+                    pr);
+            log.warn("Marked stuck review as failed. repositoryId={}, pr={}, reviewStartedHead={}",
+                    pr.getRepositoryId(), pr.getPrNumber(), pr.getReviewStartedHeadSha());
+        }
+
+        return stuckReviews.size();
+    }
+
+    private GithubAccount notificationAccountFor(PullRequest pr) {
+        try {
+            RepositoryAiSettings settings = repositoryAiSettingsService.getRequired(pr.getRepositoryId());
+            return settings.getPostingAccount() != null ? settings.getPostingAccount() : pr.getGithubAccount();
+        } catch (Exception e) {
+            return pr.getGithubAccount();
         }
     }
 
