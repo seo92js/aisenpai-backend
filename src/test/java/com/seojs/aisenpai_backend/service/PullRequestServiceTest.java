@@ -15,6 +15,7 @@ import com.seojs.aisenpai_backend.github.entity.GithubAccount;
 import com.seojs.aisenpai_backend.github.entity.RepositoryAiSettings;
 import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
+import com.seojs.aisenpai_backend.github.service.RepositoryCacheService;
 import com.seojs.aisenpai_backend.github.service.RepositoryAiSettingsService;
 import com.seojs.aisenpai_backend.github.service.WebhookSecurityService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
@@ -71,6 +72,9 @@ class PullRequestServiceTest {
     @Mock
     private RepositoryAiSettingsService repositoryAiSettingsService;
 
+    @Mock
+    private RepositoryCacheService repositoryCacheService;
+
     private PullRequestService pullRequestService;
     private ReviewFindingValidationService reviewFindingValidationService;
 
@@ -81,7 +85,7 @@ class PullRequestServiceTest {
         pullRequestService = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, objectMapper, eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService, reviewFindingValidationService,
-                repositoryAiSettingsService);
+                repositoryAiSettingsService, repositoryCacheService);
     }
 
     private RepositoryAiSettings repositorySettings(Long repositoryId, String owner, String repo,
@@ -393,10 +397,7 @@ class PullRequestServiceTest {
         when(objectMapper.readValue(payload, WebhookPayloadDto.class)).thenReturn(dto);
         when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
                 .thenReturn(Optional.of(existingPr));
-        when(githubService.findAccessTokenByLoginId(ownerLogin)).thenReturn("access-token");
         when(repositoryAiSettingsService.getOrCreatePlaceholder(repoId, ownerLogin, repoName))
-                .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
-        when(repositoryAiSettingsService.getRequired(repoId))
                 .thenReturn(repositorySettings(repoId, ownerLogin, repoName, account));
 
         // when
@@ -406,7 +407,7 @@ class PullRequestServiceTest {
         assertEquals(PullRequest.PullRequestState.MERGED, existingPr.getPrState());
         assertEquals(PullRequest.ReviewStatus.COMPLETED, existingPr.getStatus());
         verify(pullRequestRepository).save(existingPr);
-        verify(githubService).evictRepositoryCache("access-token");
+        verify(repositoryCacheService).evictAll();
     }
 
     @Test
@@ -497,7 +498,8 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
+                repositoryCacheService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -571,7 +573,8 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
+                repositoryCacheService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -677,7 +680,8 @@ class PullRequestServiceTest {
         PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
-                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService);
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
+                repositoryCacheService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")

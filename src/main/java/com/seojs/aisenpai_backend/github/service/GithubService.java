@@ -13,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
@@ -44,6 +43,7 @@ public class GithubService {
     private final PullRequestRepository pullRequestRepository;
     private final AiService aiService;
     private final RepositoryAiSettingsService repositoryAiSettingsService;
+    private final RepositoryCacheService repositoryCacheService;
     @Qualifier("githubApiExecutor")
     private final Executor githubApiExecutor;
 
@@ -408,6 +408,7 @@ public class GithubService {
                     .block();
 
             repositoryAiSettingsService.registerWebhookSettings(repositoryInfo.getId(), owner, repository, account);
+            repositoryCacheService.evictAll();
             log.info("Webhook registered for {}/{}", owner, repository);
         } catch (Exception e) {
             throw new WebhookRegistrationEx("Error occurred during webhook registration", e);
@@ -448,11 +449,4 @@ public class GithubService {
         }
     }
 
-    /**
-     * 저장소 캐시 강제 초기화
-     */
-    @CacheEvict(value = "repositories", key = "#accessToken")
-    public void evictRepositoryCache(String accessToken) {
-        log.info("Evicting repository cache for accessToken: {}", accessToken.substring(0, 5) + "...");
-    }
 }
