@@ -143,7 +143,11 @@ public class RepositoryAiSettings {
         sb.append("일반적인 주의사항, 권장사항, 가능성 언급, 스타일 의견은 작성하지 마세요.\n");
         sb.append("반드시 제공된 diff와 reviewContext 코드에서 명백하게 확인되는 문제만 리뷰하세요.\n");
         sb.append("코드 근거 없이 \"필요합니다\", \"주의가 필요합니다\", \"발생할 수 있습니다\"처럼 추측성 표현으로 comment를 작성하지 마세요.\n");
+        sb.append("\"검토 필요\", \"확인 필요\", \"가능성 있음\", \"복잡해질 수 있음\"처럼 실제 결함을 설명하지 않는 추상 코멘트는 작성하지 마세요.\n");
+        sb.append("각 comment는 실제 실패 조건, 사용자나 시스템에 미치는 영향, 구체적 수정 방향을 모두 포함해야 합니다.\n");
+        sb.append("새 필드, 분기, 메서드, 클래스가 추가되었다는 사실만으로 문제라고 지적하지 마세요.\n");
         sb.append("이미 코드에 존재하는 처리(예: 트랜잭션, 검증, 예외 처리, 권한 체크)를 요구하지 마세요.\n");
+        sb.append("테스트, lock, 검증, 예외 처리가 diff에 포함되어 있으면 그 코드가 우려를 이미 해결하는지 먼저 확인하세요.\n");
         sb.append("주어진 변경된 파일 목록과 저장소 구조 정보는 변경 이해를 위한 보조 자료로 사용하세요.\n\n");
         sb.append("중요: 아래의 diff 근거 원칙과 응답 형식 규칙은 리뷰 톤, 포커스, 상세 수준보다 우선합니다.\n\n");
 
@@ -186,6 +190,8 @@ public class RepositoryAiSettings {
         sb.append("path는 제공된 diff 상의 filename과 정확히 일치해야 합니다.\n");
         sb.append("라인 번호(line)는 작성하지 마세요. 대신 지적하고자 하는 추가 라인의 codeSnippet을 포함해 주세요.\n");
         sb.append("codeSnippet은 diff에 포함된 추가 라인 중 한 줄과 일치해야 하며, diff 표시용 '+' 문자는 제외하세요.\n");
+        sb.append("codeSnippet에는 여러 줄을 넣지 마세요. 여러 줄 맥락이 필요하면 가장 직접적인 추가 라인 한 줄만 선택하세요.\n");
+        sb.append("body가 실제 실패 조건, 영향, 수정 방향을 모두 설명하지 못하면 comment를 만들지 마세요.\n");
         sb.append("수정되지 않은 라인, 삭제된 라인, repositoryTree나 relatedFiles만 보고 추정한 문제, 파일 전체 맥락이 더 필요한 문제는 comments와 generalReview 모두에 지적 사항으로 작성하지 마세요.\n");
         sb.append("generalReview에는 finding이나 문제 제기를 작성하지 마세요. 실제 게시용 generalReview는 서버가 검증 결과를 기준으로 생성하므로 빈 문자열로 두어도 됩니다.\n");
         sb.append("지적할 내용이 없으면 comments는 빈 배열로 두세요.\n");

@@ -3,6 +3,8 @@ package com.seojs.aisenpai_backend.github.service;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
+
 @Slf4j
 @Service
 public class ReviewAnchorService {
@@ -11,20 +13,33 @@ public class ReviewAnchorService {
      * Patch 내에서 codeSnippet이 위치한 라인의 GitHub 코멘트용 라인 번호 조회
      */
     public Integer findLineNumber(String patch, String codeSnippet) {
-        if (patch == null || codeSnippet == null || patch.isEmpty() || codeSnippet.isEmpty()) {
-            return null;
+        return findAnchor(patch, codeSnippet).line();
+    }
+
+    public AnchorResult findAnchor(String patch, String codeSnippet) {
+        if (codeSnippet == null || codeSnippet.isBlank()) {
+            return AnchorResult.failed(AnchorFailureReason.EMPTY_SNIPPET);
+        }
+        if (patch == null || patch.isBlank()) {
+            return AnchorResult.failed(AnchorFailureReason.MISSING_PATCH);
         }
 
-        String targetLine = codeSnippet.lines()
+        List<String> snippetLines = codeSnippet.lines()
                 .map(String::trim)
                 .filter(line -> !line.isEmpty())
-                .findFirst()
-                .orElse("");
-        if (targetLine.isEmpty()) {
-            return null;
+                .toList();
+        if (snippetLines.isEmpty()) {
+            return AnchorResult.failed(AnchorFailureReason.EMPTY_SNIPPET);
+        }
+        if (snippetLines.size() > 1) {
+            return AnchorResult.failed(AnchorFailureReason.MULTILINE_SNIPPET_MISMATCH);
         }
 
-        // Patch 파싱 및 검색
+        String targetLine = snippetLines.get(0);
+        if (targetLine.isEmpty()) {
+            return AnchorResult.failed(AnchorFailureReason.EMPTY_SNIPPET);
+        }
+
         String[] patchLines = patch.split("\\R");
         int currentLineInFile = 0;
 
@@ -60,12 +75,32 @@ public class ReviewAnchorService {
                 String cleanLine = line.substring(1).trim();
 
                 if (cleanLine.equals(targetLine)) {
-                    return currentLineInFile;
+                    return AnchorResult.anchored(currentLineInFile);
                 }
             }
         }
 
-        log.info("Could not anchor review comment. snippet='{}'", targetLine);
-        return null;
+        return AnchorResult.failed(AnchorFailureReason.SNIPPET_NOT_ADDED_LINE);
+    }
+
+    public enum AnchorFailureReason {
+        EMPTY_SNIPPET,
+        MISSING_PATCH,
+        MULTILINE_SNIPPET_MISMATCH,
+        SNIPPET_NOT_ADDED_LINE
+    }
+
+    public record AnchorResult(Integer line, AnchorFailureReason failureReason) {
+        public static AnchorResult anchored(Integer line) {
+            return new AnchorResult(line, null);
+        }
+
+        public static AnchorResult failed(AnchorFailureReason failureReason) {
+            return new AnchorResult(null, failureReason);
+        }
+
+        public boolean anchored() {
+            return line != null;
+        }
     }
 }

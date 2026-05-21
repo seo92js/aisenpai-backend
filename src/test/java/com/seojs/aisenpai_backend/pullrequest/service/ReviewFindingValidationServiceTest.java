@@ -4,6 +4,7 @@ import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
 import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
 import com.seojs.aisenpai_backend.github.service.ReviewAnchorService;
+import com.seojs.aisenpai_backend.pullrequest.service.ReviewFindingValidationService.DiscardReason;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -38,6 +39,7 @@ class ReviewFindingValidationServiceTest {
         assertEquals(1, result.anchoredComments().size());
         assertEquals(2, result.anchoredComments().get(0).getLine());
         assertEquals(1, result.discardedCount());
+        assertEquals(1, result.discardedReasonCounts().get(DiscardReason.SNIPPET_NOT_ADDED_LINE));
         assertEquals("변경 파일 1개를 검토했고, diff 기준 리뷰 코멘트 1건을 확인했습니다.",
                 result.aiResponse().getGeneralReview());
     }
@@ -128,8 +130,66 @@ class ReviewFindingValidationServiceTest {
         // then
         assertEquals(0, result.anchoredComments().size());
         assertEquals(1, result.discardedCount());
+        assertEquals(1, result.discardedReasonCounts().get(DiscardReason.PATH_NOT_CHANGED));
         assertEquals("변경 파일 0개를 검토했으며, 이번 diff에서 명백한 문제는 발견되지 않았습니다.",
                 result.aiResponse().getGeneralReview());
+    }
+
+    @Test
+    void validate_ClassifiesMissingPatchDiscardReason() {
+        // given
+        AiReviewResponseDto response = AiReviewResponseDto.builder()
+                .comments(List.of(comment("src/App.java", "private final String name;", "검증 누락입니다.")))
+                .build();
+
+        // when
+        var result = service.validate(response, List.of(changedFile("src/App.java", null)));
+
+        // then
+        assertEquals(0, result.anchoredComments().size());
+        assertEquals(1, result.discardedCount());
+        assertEquals(1, result.discardedReasonCounts().get(DiscardReason.MISSING_PATCH));
+    }
+
+    @Test
+    void validate_ClassifiesMultilineSnippetMismatch() {
+        // given
+        AiReviewResponseDto response = AiReviewResponseDto.builder()
+                .comments(List.of(comment("src/App.java",
+                        "private final String name;\nprivate final String token;",
+                        "여러 줄 스니펫은 GitHub inline anchor로 쓰지 않습니다.")))
+                .build();
+        String patch = """
+                @@ -1,3 +1,5 @@
+                 class App {
+                +    private final String name;
+                +    private final String token;
+                 }
+                """;
+
+        // when
+        var result = service.validate(response, List.of(changedFile("src/App.java", patch)));
+
+        // then
+        assertEquals(0, result.anchoredComments().size());
+        assertEquals(1, result.discardedCount());
+        assertEquals(1, result.discardedReasonCounts().get(DiscardReason.MULTILINE_SNIPPET_MISMATCH));
+    }
+
+    @Test
+    void validate_ClassifiesInvalidShapeDiscardReason() {
+        // given
+        AiReviewResponseDto response = AiReviewResponseDto.builder()
+                .comments(List.of(comment("src/App.java", "private final String name;", "")))
+                .build();
+
+        // when
+        var result = service.validate(response, List.of());
+
+        // then
+        assertEquals(0, result.anchoredComments().size());
+        assertEquals(1, result.discardedCount());
+        assertEquals(1, result.discardedReasonCounts().get(DiscardReason.INVALID_SHAPE));
     }
 
     @Test

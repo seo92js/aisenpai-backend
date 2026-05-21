@@ -67,6 +67,9 @@ public class ReviewContextService {
                         + "missingPatch={}, truncatedChanged={}, usedContentChars={}, usedContextChars={}",
                 fileContexts.size(), relatedFiles.size(), skippedChangedFiles, failedChangedFiles, missingPatchFiles,
                 truncatedChangedFiles, usedContentChars[0], usedContextChars[0]);
+        if (truncatedChangedFiles > 0) {
+            log.info("Truncated changed review context files: {}", summarizeTruncatedChangedFiles(fileContexts));
+        }
 
         return ReviewContextDto.builder()
                 .pullRequest(buildPullRequestMeta(owner, repo, prNumber, prInfo))
@@ -329,6 +332,16 @@ public class ReviewContextService {
 
     private boolean matchesIgnorePattern(String filename, List<PathMatcher> ignoreMatchers) {
         return ignoreMatchers.stream().anyMatch(matcher -> matcher.matches(Paths.get(filename)));
+    }
+
+    private List<String> summarizeTruncatedChangedFiles(List<ChangedFileContextDto> fileContexts) {
+        return fileContexts.stream()
+                .filter(file -> file.isTruncated() || file.isPatchTruncated())
+                .map(file -> file.getFilename()
+                        + "(patchTruncated=" + file.isPatchTruncated()
+                        + ", contentTruncated=" + file.isTruncated()
+                        + ", reason=" + file.getContentSkipReason() + ")")
+                .toList();
     }
 
     private record ContentLimitResult(String content, boolean truncated, String reason) {
