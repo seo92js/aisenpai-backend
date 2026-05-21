@@ -407,7 +407,7 @@ class PullRequestServiceTest {
         assertEquals(PullRequest.PullRequestState.MERGED, existingPr.getPrState());
         assertEquals(PullRequest.ReviewStatus.COMPLETED, existingPr.getStatus());
         verify(pullRequestRepository).save(existingPr);
-        verify(repositoryCacheService).evictAll();
+        verify(repositoryCacheService).evictAllAfterCommit();
     }
 
     @Test

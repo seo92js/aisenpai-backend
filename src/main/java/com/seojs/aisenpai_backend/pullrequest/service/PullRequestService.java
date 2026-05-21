@@ -544,7 +544,7 @@ public class PullRequestService {
         }
 
         repositoryAiSettingsService.getOrCreatePlaceholder(repoId, owner, repoName);
-        repositoryCacheService.evictAll();
+        repositoryCacheService.evictAllAfterCommit();
     }
 
     /**
