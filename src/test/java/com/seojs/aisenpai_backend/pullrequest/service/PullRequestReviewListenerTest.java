@@ -61,6 +61,8 @@ class PullRequestReviewListenerTest {
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
         when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
                 .thenReturn("{}");
+        when(aiService.callAiChat(eq("openai-key"), contains("Critic"), anyString(), eq("gpt-4o-mini"), eq(0.1)))
+                .thenReturn(null);
 
         // when
         listener.handleReviewRequested(request);
@@ -73,6 +75,30 @@ class PullRequestReviewListenerTest {
         assertTrue(promptCaptor.getValue().contains("\"changedFiles\""));
         assertFalse(promptCaptor.getValue().contains("\"repositoryTree\":\"tree\""));
         verify(pullRequestService).updateAiReview(1L, 1, "{}", PullRequest.ReviewStatus.COMPLETED, "head", "run-1");
+    }
+
+    @Test
+    void handleReviewRequested_AppliesCriticFilterToCleanNoiseReviews() {
+        // given
+        ChangedFileDto changedFile = new ChangedFileDto(
+                "src/App.ts", "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents", "@@ -1 +1 @@\n+a");
+        ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(changedFile), "gpt-4o-mini",
+                "system", "encrypted-key", "tree", "head", "run-1", null);
+
+        String rawReview = "{\"comments\": [{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"This is a bug.\"},{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"단위 테스트를 추가하세요.\"}]}";
+        String filteredReview = "{\"comments\": [{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"This is a bug.\"}]}";
+
+        when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
+        when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
+                .thenReturn(rawReview);
+        when(aiService.callAiChat(eq("openai-key"), contains("Critic"), eq(rawReview), eq("gpt-4o-mini"), eq(0.1)))
+                .thenReturn(filteredReview);
+
+        // when
+        listener.handleReviewRequested(request);
+
+        // then
+        verify(pullRequestService).updateAiReview(1L, 1, filteredReview, PullRequest.ReviewStatus.COMPLETED, "head", "run-1");
     }
 
     @Test
