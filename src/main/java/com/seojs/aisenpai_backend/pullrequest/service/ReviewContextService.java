@@ -38,6 +38,12 @@ public class ReviewContextService {
     public ReviewContextDto buildReviewContext(String accessToken, String owner, String repo, Integer prNumber,
             PullRequestInfoDto prInfo, List<ChangedFileDto> changedFiles, GitTreeResponseDto treeDto,
             List<String> ignorePatterns) {
+        return buildReviewContext(null, accessToken, owner, repo, prNumber, prInfo, changedFiles, treeDto, ignorePatterns);
+    }
+
+    public ReviewContextDto buildReviewContext(Long repositoryId, String accessToken, String owner, String repo, Integer prNumber,
+            PullRequestInfoDto prInfo, List<ChangedFileDto> changedFiles, GitTreeResponseDto treeDto,
+            List<String> ignorePatterns) {
         int[] usedContentChars = { 0 };
         int[] usedContextChars = { 0 };
         List<ChangedFileContextDto> fileContexts = new ArrayList<>();
@@ -48,7 +54,7 @@ public class ReviewContextService {
             fileContexts.add(buildChangedFileContext(accessToken, owner, repo, prInfo, file, ignoreMatchers,
                     usedContentChars, usedContextChars, fileContexts.size()));
         }
-        List<RelatedFileContextDto> relatedFiles = buildRelatedFileContexts(accessToken, owner, repo, prInfo,
+        List<RelatedFileContextDto> relatedFiles = buildRelatedFileContexts(repositoryId, accessToken, owner, repo, prInfo,
                 fileContexts, treeDto, ignorePatterns, usedContentChars, usedContextChars);
 
         long skippedChangedFiles = fileContexts.stream()
@@ -155,10 +161,10 @@ public class ReviewContextService {
         }
     }
 
-    private List<RelatedFileContextDto> buildRelatedFileContexts(String accessToken, String owner, String repo,
+    private List<RelatedFileContextDto> buildRelatedFileContexts(Long repositoryId, String accessToken, String owner, String repo,
             PullRequestInfoDto prInfo, List<ChangedFileContextDto> changedFileContexts, GitTreeResponseDto treeDto,
             List<String> ignorePatterns, int[] usedContentChars, int[] usedContextChars) {
-        List<RelatedFileCandidate> candidates = relatedFileCandidateService.findCandidates(changedFileContexts,
+        List<RelatedFileCandidate> candidates = relatedFileCandidateService.findCandidates(repositoryId, changedFileContexts,
                 treeDto, ignorePatterns);
         if (candidates.isEmpty()) {
             return Collections.emptyList();

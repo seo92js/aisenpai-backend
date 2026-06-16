@@ -17,9 +17,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @Service
+@lombok.extern.slf4j.Slf4j
 public class RelatedFileCandidateService {
     public static final int MAX_RELATED_FILES = 6;
     public static final int MAX_RELATED_FILES_PER_CHANGED_FILE = 2;
+
+    private final CodeGraphQueryService codeGraphQueryService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public RelatedFileCandidateService(CodeGraphQueryService codeGraphQueryService) {
+        this.codeGraphQueryService = codeGraphQueryService;
+    }
+
+    public RelatedFileCandidateService() {
+        this.codeGraphQueryService = null;
+    }
 
     private static final List<String> CONFIG_FILENAMES = List.of(
             "package.json", "tsconfig.json", "pyproject.toml", "go.mod", "Cargo.toml", "pom.xml",
@@ -28,6 +40,11 @@ public class RelatedFileCandidateService {
             "(?:import|export|require|include|from)\\s*(?:\\([^'\"]*)?[\"']([^\"']+)[\"']");
 
     public List<RelatedFileCandidate> findCandidates(List<ChangedFileContextDto> changedFiles,
+            GitTreeResponseDto treeDto, List<String> ignorePatterns) {
+        return findCandidates(null, changedFiles, treeDto, ignorePatterns);
+    }
+
+    public List<RelatedFileCandidate> findCandidates(Long repositoryId, List<ChangedFileContextDto> changedFiles,
             GitTreeResponseDto treeDto, List<String> ignorePatterns) {
         if (changedFiles == null || changedFiles.isEmpty() || treeDto == null || treeDto.getTree() == null) {
             return List.of();
@@ -42,6 +59,39 @@ public class RelatedFileCandidateService {
             return List.of();
         }
 
+        List<RelatedFileCandidate> boosterCandidates = List.of();
+        if (codeGraphQueryService != null && repositoryId != null) {
+            try {
+                boosterCandidates = codeGraphQueryService.findCandidates(repositoryId, changedFiles, treePaths, ignorePatterns);
+                log.info("Graph booster found {} candidates for repositoryId={}", boosterCandidates.size(), repositoryId);
+            } catch (Exception e) {
+                log.warn("Graph booster failed for repositoryId={}. Falling back to regex search. Error: {}", repositoryId, e.getMessage());
+            }
+        }
+
+        Map<String, RelatedFileCandidate> selected = new LinkedHashMap<>();
+        for (RelatedFileCandidate bc : boosterCandidates) {
+            if (selected.size() >= MAX_RELATED_FILES) {
+                break;
+            }
+            selected.put(bc.path(), bc);
+        }
+
+        if (selected.size() < MAX_RELATED_FILES) {
+            List<RelatedFileCandidate> fallbackCandidates = runFallbackSearch(changedFiles, treePaths, ignorePatterns);
+            for (RelatedFileCandidate fc : fallbackCandidates) {
+                if (selected.size() >= MAX_RELATED_FILES) {
+                    break;
+                }
+                selected.putIfAbsent(fc.path(), fc);
+            }
+        }
+
+        return List.copyOf(selected.values());
+    }
+
+    private List<RelatedFileCandidate> runFallbackSearch(List<ChangedFileContextDto> changedFiles,
+            List<String> treePaths, List<String> ignorePatterns) {
         Set<String> changedPaths = new HashSet<>();
         for (ChangedFileContextDto changedFile : changedFiles) {
             if (changedFile.getFilename() != null) {

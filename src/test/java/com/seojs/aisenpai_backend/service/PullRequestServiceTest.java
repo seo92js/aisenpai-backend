@@ -27,6 +27,7 @@ import com.seojs.aisenpai_backend.pullrequest.repository.PullRequestRepository;
 import com.seojs.aisenpai_backend.pullrequest.service.ReviewFindingValidationService;
 import com.seojs.aisenpai_backend.pullrequest.service.ReviewContextService;
 import com.seojs.aisenpai_backend.pullrequest.service.PullRequestService;
+import com.seojs.aisenpai_backend.pullrequest.service.CodeGraphIndexService;
 import com.seojs.aisenpai_backend.notification.service.NotificationService;
 import com.seojs.aisenpai_backend.notification.entity.NotificationType;
 import org.junit.jupiter.api.BeforeEach;
@@ -76,6 +77,9 @@ class PullRequestServiceTest {
     @Mock
     private RepositoryCacheService repositoryCacheService;
 
+    @Mock
+    private CodeGraphIndexService codeGraphIndexService;
+
     private PullRequestService pullRequestService;
     private ReviewFindingValidationService reviewFindingValidationService;
 
@@ -86,7 +90,7 @@ class PullRequestServiceTest {
         pullRequestService = new PullRequestService(pullRequestRepository, githubService,
                 webhookSecurityService, objectMapper, eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService, reviewFindingValidationService,
-                repositoryAiSettingsService, repositoryCacheService);
+                repositoryAiSettingsService, repositoryCacheService, codeGraphIndexService);
     }
 
     private RepositoryAiSettings repositorySettings(Long repositoryId, String owner, String repo,
@@ -574,7 +578,7 @@ class PullRequestServiceTest {
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
                 new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
-                repositoryCacheService);
+                repositoryCacheService, codeGraphIndexService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -649,7 +653,7 @@ class PullRequestServiceTest {
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
                 new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
-                repositoryCacheService);
+                repositoryCacheService, codeGraphIndexService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -756,7 +760,7 @@ class PullRequestServiceTest {
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
                 new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
-                repositoryCacheService);
+                repositoryCacheService, codeGraphIndexService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -819,7 +823,7 @@ class PullRequestServiceTest {
                 webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
                 notificationService, reviewContextService,
                 new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
-                repositoryCacheService);
+                repositoryCacheService, codeGraphIndexService);
 
         GithubAccount account = GithubAccount.builder()
                 .loginId("user")
@@ -1029,7 +1033,7 @@ class PullRequestServiceTest {
         when(githubService.getChangedFiles(accessToken, owner, repo, prNumber)).thenReturn(List.of(changedFile));
         when(repositoryAiSettingsService.getConfiguredForReview(repoId)).thenReturn(settings);
         when(githubService.getRepositoryTree(accessToken, owner, repo, "base", true)).thenReturn(treeDto);
-        when(reviewContextService.buildReviewContext(eq(accessToken), eq(owner), eq(repo), eq(prNumber), eq(prInfo),
+        when(reviewContextService.buildReviewContext(eq(repoId), eq(accessToken), eq(owner), eq(repo), eq(prNumber), eq(prInfo),
                 eq(List.of(changedFile)), eq(treeDto), anyList())).thenReturn(reviewContext);
 
         // when

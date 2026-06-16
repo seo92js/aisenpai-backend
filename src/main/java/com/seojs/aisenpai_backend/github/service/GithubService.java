@@ -1,6 +1,7 @@
 package com.seojs.aisenpai_backend.github.service;
 
 import com.seojs.aisenpai_backend.ai.service.AiService;
+import com.seojs.aisenpai_backend.pullrequest.service.CodeGraphIndexService;
 import com.seojs.aisenpai_backend.exception.GitHubApiEx;
 import com.seojs.aisenpai_backend.exception.GithubRateLimitEx;
 import com.seojs.aisenpai_backend.exception.GithubAccountNotFoundEx;
@@ -46,6 +47,7 @@ public class GithubService {
     private final RepositoryCacheService repositoryCacheService;
     @Qualifier("githubApiExecutor")
     private final Executor githubApiExecutor;
+    private final CodeGraphIndexService codeGraphIndexService;
 
     @Value("${github.webhook.url}")
     private String webhookUrl;
@@ -411,6 +413,19 @@ public class GithubService {
             repositoryAiSettingsService.registerWebhookSettings(repositoryInfo.getId(), owner, repository, account);
             repositoryCacheService.evictAll();
             log.info("Webhook registered for {}/{}", owner, repository);
+
+            // 자동 첫 색인 제출
+            try {
+                String defaultBranchName = getDefaultBranch(accessToken, owner, repository);
+                String latestSha = getLatestCommitSha(accessToken, owner, repository, defaultBranchName);
+                if (latestSha != null && !latestSha.isBlank()) {
+                    codeGraphIndexService.submitIndexingTask(repositoryInfo.getId(), "refs/heads/" + defaultBranchName, latestSha, true);
+                    log.info("Automatically triggered initial indexing task for {}/{} (branch: {}, commit: {})", 
+                            owner, repository, defaultBranchName, latestSha);
+                }
+            } catch (Exception ex) {
+                log.warn("Failed to automatically trigger initial indexing for {}/{}: {}", owner, repository, ex.getMessage());
+            }
         } catch (Exception e) {
             throw new WebhookRegistrationEx("Error occurred during webhook registration", e);
         }
@@ -450,4 +465,40 @@ public class GithubService {
         }
     }
 
+    /**
+     * 특정 저장소의 디폴트 브랜치 이름과 최신 커밋 SHA를 조회
+     */
+    public String getDefaultBranch(String accessToken, String owner, String repo) {
+        try {
+            Map<?, ?> repoInfo = webClientBuilder.build()
+                    .get()
+                    .uri("https://api.github.com/repos/{owner}/{repo}", owner, repo)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block();
+            return repoInfo != null ? repoInfo.get("default_branch").toString() : "main";
+        } catch (Exception e) {
+            log.warn("Failed to fetch default branch name for {}/{}: {}", owner, repo, e.getMessage());
+            return "main";
+        }
+    }
+
+    /**
+     * 특정 저장소 특정 브랜치의 최신 커밋 SHA를 조회
+     */
+    public String getLatestCommitSha(String accessToken, String owner, String repo, String branch) {
+        try {
+            Map<?, ?> commitInfo = webClientBuilder.build()
+                    .get()
+                    .uri("https://api.github.com/repos/{owner}/{repo}/commits/{branch}", owner, repo, branch)
+                    .header("Authorization", "Bearer " + accessToken)
+                    .retrieve()
+                    .bodyToMono(Map.class)
+                    .block();
+            return commitInfo != null ? commitInfo.get("sha").toString() : null;
+        } catch (Exception e) {
+            throw new com.seojs.aisenpai_backend.exception.GitHubApiEx("Failed to get latest commit SHA for branch: " + branch, e);
+        }
+    }
 }
