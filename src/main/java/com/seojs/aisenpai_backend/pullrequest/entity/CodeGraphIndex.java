@@ -117,6 +117,7 @@ public class CodeGraphIndex {
         this.dependencyCount = dependencyCount;
         this.parserType = parserType;
         this.parserVersion = parserVersion;
+        this.failureReason = null;
         this.completedAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
     }
