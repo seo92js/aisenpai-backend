@@ -149,27 +149,10 @@ public class CodeGraphIndexService {
         String owner = context.owner;
         String repo = context.repo;
 
-        HttpClient client = HttpClient.newBuilder()
-                .followRedirects(HttpClient.Redirect.NORMAL)
-                .build();
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create("https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + commitSha))
-                .header("Authorization", "Bearer " + accessToken)
-                .header("Accept", "application/vnd.github+json")
-                .timeout(java.time.Duration.ofSeconds(120))
-                .GET()
-                .build();
-
-        log.info("Downloading zipball from GitHub for repository {}/{} and commit {}", owner, repo, commitSha);
-        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to download zipball from GitHub. HTTP status: " + response.statusCode());
-        }
-
         Map<String, List<String>> fileToRawImports = new HashMap<>();
         Set<String> allFiles = new HashSet<>();
 
-        try (InputStream bodyStream = response.body()) {
+        try (InputStream bodyStream = downloadZipball(owner, repo, commitSha, accessToken)) {
             parseZipStream(bodyStream, allFiles, fileToRawImports);
         }
 
@@ -213,6 +196,31 @@ public class CodeGraphIndexService {
             }
             return null;
         });
+    }
+
+    InputStream downloadZipball(String owner, String repo, String commitSha, String accessToken) throws IOException, InterruptedException {
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create("https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + commitSha))
+                .header("Authorization", "Bearer " + accessToken)
+                .header("Accept", "application/vnd.github+json")
+                .timeout(java.time.Duration.ofSeconds(120))
+                .GET()
+                .build();
+
+        log.info("Downloading zipball from GitHub for repository {}/{} and commit {}", owner, repo, commitSha);
+        HttpResponse<InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
+        if (response.statusCode() != 200) {
+            if (response.body() != null) {
+                try {
+                    response.body().close();
+                } catch (IOException ignored) {}
+            }
+            throw new IOException("Failed to download zipball from GitHub. HTTP status: " + response.statusCode());
+        }
+        return response.body();
     }
 
     void parseZipStream(InputStream inputStream, Set<String> allFiles, Map<String, List<String>> fileToRawImports) throws Exception {
@@ -452,24 +460,32 @@ public class CodeGraphIndexService {
             importStr = importStr.substring(0, importStr.indexOf('?'));
         }
 
+        String[] extensions = {".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"};
+        List<String> candidatesToTry = new ArrayList<>();
+
         if (!importStr.startsWith(".")) {
             if (importStr.startsWith("@/")) {
-                importStr = "src/" + importStr.substring(2);
+                candidatesToTry.add("src/" + importStr.substring(2));
+            } else if (importStr.startsWith("src/")) {
+                candidatesToTry.add(importStr);
             } else {
-                if (!importStr.startsWith("src/")) {
-                    return resolved;
-                }
+                candidatesToTry.add("src/" + importStr);
+                candidatesToTry.add(importStr);
             }
         } else {
             String dir = directoryOf(sourceFile);
-            importStr = normalizeRelativePath(dir, importStr);
+            candidatesToTry.add(normalizeRelativePath(dir, importStr));
         }
 
-        String[] extensions = {".ts", ".tsx", ".js", ".jsx", "/index.ts", "/index.tsx", "/index.js", "/index.jsx"};
-        for (String ext : extensions) {
-            String candidate = importStr + ext;
-            if (allFiles.contains(candidate)) {
-                resolved.add(candidate);
+        for (String baseCandidate : candidatesToTry) {
+            for (String ext : extensions) {
+                String candidate = baseCandidate + ext;
+                if (allFiles.contains(candidate)) {
+                    resolved.add(candidate);
+                    break;
+                }
+            }
+            if (!resolved.isEmpty()) {
                 break;
             }
         }
@@ -538,6 +554,7 @@ public class CodeGraphIndexService {
         List<CodeGraphIndex> indexes = codeGraphIndexRepository.findByRepositoryIdOrderByCreatedAtDesc(repositoryId);
         for (CodeGraphIndex idx : indexes) {
             if (!idx.getId().equals(currentIndexId)) {
+                codeFileDependencyRepository.deleteByCodeGraphIndexId(idx.getId());
                 codeGraphIndexRepository.delete(idx);
             }
         }
