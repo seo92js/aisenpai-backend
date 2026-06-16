@@ -229,7 +229,7 @@ public class CodeGraphIndexService {
 
                 String entryName = entry.getName();
 
-                if (entryName.contains("..") || entryName.startsWith("/")) {
+                if (isZipSlip(entryName)) {
                     throw new SecurityException("Zip Slip security violation: invalid entry name " + entryName);
                 }
 
@@ -563,6 +563,23 @@ public class CodeGraphIndexService {
             }
             return null;
         });
+    }
+
+    static boolean isZipSlip(String entryName) {
+        if (entryName == null) {
+            return false;
+        }
+        String normalized = entryName.replace('\\', '/');
+        if (normalized.startsWith("/")) {
+            return true;
+        }
+        String[] segments = normalized.split("/");
+        for (String segment : segments) {
+            if ("..".equals(segment)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static class IndexingContext {
