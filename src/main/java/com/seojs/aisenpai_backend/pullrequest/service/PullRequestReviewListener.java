@@ -86,7 +86,7 @@ public class PullRequestReviewListener {
             }
 
             pullRequestService.updateAiReview(repositoryId, prNumber, filteredReview, ReviewStatus.COMPLETED,
-                    dto.getReviewStartedHeadSha(), dto.getReviewRunId());
+                    dto.getReviewStartedHeadSha(), dto.getReviewRunId(), dto.getReviewContext());
         } catch (Exception e) {
             String failureCode = ReviewFailureClassifier.codeFor(e);
             String failureMessage = ReviewFailureClassifier.messageFor(e);

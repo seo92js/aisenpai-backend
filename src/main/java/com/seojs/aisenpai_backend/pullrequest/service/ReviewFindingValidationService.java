@@ -41,6 +41,7 @@ public class ReviewFindingValidationService {
                 AiReviewResponseDto.builder()
                         .generalReview(generalReview)
                         .comments(anchoredComments)
+                        .contextFiles(aiResponse.getContextFiles())
                         .build(),
                 anchoredComments,
                 discardedCount,
