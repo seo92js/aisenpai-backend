@@ -132,7 +132,7 @@ public class CodeGraphQueryService {
                 for (DependencyEdge edge : outEdges) {
                     if (edge.resolved && edge.targetPath != null) {
                         addCandidate(candidates, edge.targetPath, edge.confidenceScore * 1.0, 
-                                "imports " + edge.targetPath + " (graph booster)", changedPaths, ignoreMatchers);
+                                "referenced by changed file: " + filename + " (graph booster)", changedPaths, ignoreMatchers);
                     }
                 }
             }
@@ -142,7 +142,7 @@ public class CodeGraphQueryService {
                 for (DependencyEdge edge : inEdges) {
                     if (edge.resolved && edge.targetPath != null) {
                         addCandidate(candidates, edge.targetPath, edge.confidenceScore * 0.8, 
-                                "imported by " + edge.targetPath + " (graph booster)", changedPaths, ignoreMatchers);
+                                "imports changed file: " + filename + " (graph booster)", changedPaths, ignoreMatchers);
                     }
                 }
             }

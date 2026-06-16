@@ -2,6 +2,8 @@ package com.seojs.aisenpai_backend.pullrequest.service;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;
+import java.io.InputStream;
+import static org.mockito.Mockito.*;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -99,5 +101,45 @@ class ZipSecurityAndSelectiveExtractionTest {
             service.parseZipStream(new ByteArrayInputStream(zipBytes), allFiles, fileToRawImports);
         });
         assertTrue(allFiles.contains("src/app/api/auth/[...nextauth]/route.ts"));
+    }
+
+    @Test
+    void testResolveJsTsImportAbsoluteAndBaseUrl() {
+        Set<String> allFiles = Set.of(
+                "src/components/Button.tsx",
+                "components/Header.js",
+                "src/utils/math.ts"
+        );
+
+        // Test 1: Absolute import from src/ folder (like baseUrl = "src")
+        List<String> resolved1 = CodeGraphIndexService.resolveJsTsImport("src/App.ts", "components/Button", allFiles);
+        assertEquals(List.of("src/components/Button.tsx"), resolved1);
+
+        // Test 2: Absolute import from root folder
+        List<String> resolved2 = CodeGraphIndexService.resolveJsTsImport("src/App.ts", "components/Header", allFiles);
+        assertEquals(List.of("components/Header.js"), resolved2);
+
+        // Test 3: Unresolved external package
+        List<String> resolved3 = CodeGraphIndexService.resolveJsTsImport("src/App.ts", "react", allFiles);
+        assertTrue(resolved3.isEmpty());
+    }
+
+    @Test
+    void testStreamClosedOnSuccess() throws Exception {
+        InputStream mockStream = spy(new ByteArrayInputStream(createMockZip(Map.of())));
+        service.parseZipStream(mockStream, new HashSet<>(), new HashMap<>());
+        verify(mockStream).close();
+    }
+
+    @Test
+    void testStreamClosedOnZipSlipException() throws IOException {
+        Map<String, String> entries = Map.of("repo-root/../../evil.sh", "echo 'evil'");
+        InputStream mockStream = spy(new ByteArrayInputStream(createMockZip(entries)));
+
+        assertThrows(SecurityException.class, () -> {
+            service.parseZipStream(mockStream, new HashSet<>(), new HashMap<>());
+        });
+
+        verify(mockStream).close();
     }
 }
