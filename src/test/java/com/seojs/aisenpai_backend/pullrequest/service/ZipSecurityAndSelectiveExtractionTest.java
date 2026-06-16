@@ -80,4 +80,24 @@ class ZipSecurityAndSelectiveExtractionTest {
         assertTrue(fileToRawImports.containsKey("src/Main.java"));
         assertEquals(List.of("com.example.utils.Helper"), fileToRawImports.get("src/Main.java"));
     }
+
+    @Test
+    void testNextjsDynamicRoutingNotBlocked() throws Exception {
+        ReflectionTestUtils.setField(service, "maxArchiveBytes", 50000000L);
+        ReflectionTestUtils.setField(service, "maxExtractedFiles", 5000);
+        ReflectionTestUtils.setField(service, "maxSourceFileBytes", 1048576L);
+
+        Map<String, String> entries = new HashMap<>();
+        entries.put("repo-root/src/app/api/auth/[...nextauth]/route.ts", "import NextAuth from 'next-auth';");
+
+        byte[] zipBytes = createMockZip(entries);
+
+        Set<String> allFiles = new HashSet<>();
+        Map<String, List<String>> fileToRawImports = new HashMap<>();
+
+        assertDoesNotThrow(() -> {
+            service.parseZipStream(new ByteArrayInputStream(zipBytes), allFiles, fileToRawImports);
+        });
+        assertTrue(allFiles.contains("src/app/api/auth/[...nextauth]/route.ts"));
+    }
 }
