@@ -811,6 +811,79 @@ class PullRequestServiceTest {
     }
 
     @Test
+    void updateAiReview_WithReviewContext_StoresEnrichedReviewWithContextFiles() {
+        // given
+        Long repoId = 1L;
+        Integer prNumber = 1;
+        PullRequestService service = new PullRequestService(pullRequestRepository, githubService,
+                webhookSecurityService, new ObjectMapper(), eventPublisher, tokenEncryptionService,
+                notificationService, reviewContextService,
+                new ReviewFindingValidationService(new ReviewAnchorService()), repositoryAiSettingsService,
+                repositoryCacheService);
+
+        GithubAccount account = GithubAccount.builder()
+                .loginId("user")
+                .accessToken("encrypted-token")
+                .build();
+        RepositoryAiSettings settings = repositorySettings(repoId, "user", "repo", account);
+
+        PullRequest pr = PullRequest.builder()
+                .repositoryId(repoId)
+                .prNumber(prNumber)
+                .repositoryName("repo")
+                .githubAccount(account)
+                .headSha("head")
+                .build();
+
+        String aiReview = """
+                {
+                  "generalReview": "전체 요약입니다.",
+                  "comments": []
+                }
+                """;
+
+        ReviewContextDto reviewContext = ReviewContextDto.builder()
+                .changedFiles(List.of(
+                        ReviewContextDto.ChangedFileContextDto.builder()
+                                .filename("src/App.java")
+                                .contentFetchStatus(ReviewContextDto.ContentFetchStatus.FETCHED)
+                                .build(),
+                        ReviewContextDto.ChangedFileContextDto.builder()
+                                .filename("src/Skip.java")
+                                .contentFetchStatus(ReviewContextDto.ContentFetchStatus.SKIPPED)
+                                .contentSkipReason("too large")
+                                .build()
+                ))
+                .relatedFiles(List.of(
+                        ReviewContextDto.RelatedFileContextDto.builder()
+                                .path("src/Util.java")
+                                .contentFetchStatus(ReviewContextDto.ContentFetchStatus.FETCHED)
+                                .build()
+                ))
+                .build();
+
+        when(pullRequestRepository.findWithLockByRepositoryIdAndPrNumber(repoId, prNumber))
+                .thenReturn(Optional.of(pr));
+        when(repositoryAiSettingsService.getRequired(repoId)).thenReturn(settings);
+        when(tokenEncryptionService.decryptToken("encrypted-token")).thenReturn("access-token");
+        when(githubService.getChangedFiles("access-token", "user", "repo", prNumber))
+                .thenReturn(List.of());
+
+        // when
+        service.updateAiReview(repoId, prNumber, aiReview, PullRequest.ReviewStatus.COMPLETED, "head", null, reviewContext);
+
+        // then
+        assertTrue(pr.getAiReview().contains("\"path\":\"src/App.java\""));
+        assertTrue(pr.getAiReview().contains("\"type\":\"changed\""));
+        assertTrue(pr.getAiReview().contains("\"status\":\"diff + content\""));
+        assertTrue(pr.getAiReview().contains("\"path\":\"src/Skip.java\""));
+        assertTrue(pr.getAiReview().contains("\"status\":\"diff only (too large)\""));
+        assertTrue(pr.getAiReview().contains("\"path\":\"src/Util.java\""));
+        assertTrue(pr.getAiReview().contains("\"type\":\"related\""));
+        assertTrue(pr.getAiReview().contains("\"status\":\"content read\""));
+    }
+
+    @Test
     void review_ClosedPr_DoesNotPublishReviewEvent() {
         // given
         Long repoId = 1L;

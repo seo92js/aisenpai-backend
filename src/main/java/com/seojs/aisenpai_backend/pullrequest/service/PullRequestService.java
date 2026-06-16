@@ -38,6 +38,7 @@ import java.time.LocalDateTime;
 import java.nio.file.FileSystems;
 import java.nio.file.PathMatcher;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
@@ -245,6 +246,12 @@ public class PullRequestService {
     @Transactional
     public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
             ReviewStatus status, String reviewStartedHeadSha, String reviewRunId) {
+        updateAiReview(repositoryId, prNumber, aiReview, status, reviewStartedHeadSha, reviewRunId, null);
+    }
+
+    @Transactional
+    public void updateAiReview(Long repositoryId, Integer prNumber, String aiReview,
+            ReviewStatus status, String reviewStartedHeadSha, String reviewRunId, ReviewContextDto reviewContext) {
         PullRequest pr = findWithLockByRepositoryIdAndPrNumberOrThrow(repositoryId, prNumber);
 
         if (reviewRunId != null && !reviewRunId.equals(pr.getReviewRunId())) {
@@ -287,7 +294,7 @@ public class PullRequestService {
         GithubAccount account = settings.getPostingAccount() != null ? settings.getPostingAccount() : pr.getGithubAccount();
 
         if (status == ReviewStatus.COMPLETED) {
-            ReviewProcessingResult reviewProcessingResult = prepareReviewForDisplay(settings, pr, aiReview);
+            ReviewProcessingResult reviewProcessingResult = prepareReviewForDisplay(settings, pr, aiReview, reviewContext);
 
             notificationService.createNotification(
                     account,
@@ -333,10 +340,24 @@ public class PullRequestService {
         }
     }
 
-    private ReviewProcessingResult prepareReviewForDisplay(RepositoryAiSettings settings, PullRequest pr, String aiReview) {
+    private ReviewProcessingResult prepareReviewForDisplay(RepositoryAiSettings settings, PullRequest pr, String aiReview, ReviewContextDto reviewContext) {
         try {
             String sanitizedAiReview = sanitizeAiReview(aiReview);
             AiReviewResponseDto aiResponse = objectMapper.readValue(sanitizedAiReview, AiReviewResponseDto.class);
+
+            if (aiResponse == null) {
+                log.warn("Parsed AI review response is null for PR #{}", pr.getPrNumber());
+                return null;
+            }
+
+            if (reviewContext != null) {
+                aiResponse = AiReviewResponseDto.builder()
+                        .generalReview(aiResponse.getGeneralReview())
+                        .comments(aiResponse.getComments())
+                        .contextFiles(buildContextFilesMetadata(reviewContext))
+                        .build();
+            }
+
             GithubAccount postingAccount = settings.getPostingAccount();
             if (postingAccount == null) {
                 log.warn("Repository settings for {}/{} have no posting account", settings.getOwner(),
@@ -355,6 +376,44 @@ public class PullRequestService {
             log.warn("Failed to normalize AI review for PR #{}: {}", pr.getPrNumber(), e.getMessage());
             return null;
         }
+    }
+
+    private List<AiReviewResponseDto.ContextFileDto> buildContextFilesMetadata(ReviewContextDto reviewContext) {
+        if (reviewContext == null) {
+            return List.of();
+        }
+        List<AiReviewResponseDto.ContextFileDto> list = new ArrayList<>();
+        if (reviewContext.getChangedFiles() != null) {
+            for (ReviewContextDto.ChangedFileContextDto file : reviewContext.getChangedFiles()) {
+                String status = "diff only";
+                if (file.getContentFetchStatus() == ReviewContextDto.ContentFetchStatus.FETCHED) {
+                    status = "diff + content";
+                } else if (file.getContentSkipReason() != null) {
+                    status = "diff only (" + file.getContentSkipReason() + ")";
+                }
+                list.add(AiReviewResponseDto.ContextFileDto.builder()
+                        .path(file.getFilename())
+                        .type("changed")
+                        .status(status)
+                        .build());
+            }
+        }
+        if (reviewContext.getRelatedFiles() != null) {
+            for (ReviewContextDto.RelatedFileContextDto file : reviewContext.getRelatedFiles()) {
+                String status = "skipped (fetch failed)";
+                if (file.getContentFetchStatus() == ReviewContextDto.ContentFetchStatus.FETCHED) {
+                    status = "content read";
+                } else if (file.getContentSkipReason() != null) {
+                    status = "skipped (" + file.getContentSkipReason() + ")";
+                }
+                list.add(AiReviewResponseDto.ContextFileDto.builder()
+                        .path(file.getPath())
+                        .type("related")
+                        .status(status)
+                        .build());
+            }
+        }
+        return list;
     }
 
     /**

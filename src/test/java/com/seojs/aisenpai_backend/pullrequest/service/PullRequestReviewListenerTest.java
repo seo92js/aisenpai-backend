@@ -74,7 +74,7 @@ class PullRequestReviewListenerTest {
         assertTrue(promptCaptor.getValue().contains("\"reviewContext\""));
         assertTrue(promptCaptor.getValue().contains("\"changedFiles\""));
         assertFalse(promptCaptor.getValue().contains("\"repositoryTree\":\"tree\""));
-        verify(pullRequestService).updateAiReview(1L, 1, "{}", PullRequest.ReviewStatus.COMPLETED, "head", "run-1");
+        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq("{}"), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), eq(reviewContext));
     }
 
     @Test
@@ -98,7 +98,7 @@ class PullRequestReviewListenerTest {
         listener.handleReviewRequested(request);
 
         // then
-        verify(pullRequestService).updateAiReview(1L, 1, filteredReview, PullRequest.ReviewStatus.COMPLETED, "head", "run-1");
+        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq(filteredReview), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), isNull());
     }
 
     @Test
