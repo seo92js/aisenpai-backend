@@ -28,10 +28,17 @@ public class WebhookPayloadDto {
         private RefDto head;
         private RefDto base;
         private Boolean merged;
+        @JsonProperty("merge_commit_sha")
+        private String mergeCommitSha;
 
         public PullRequestDto(int number, String title, String body, String state, UserDto user, String htmlUrl,
                 String diffUrl) {
-            this(number, title, body, state, user, htmlUrl, diffUrl, null, null, null);
+            this(number, title, body, state, user, htmlUrl, diffUrl, null, null, null, null);
+        }
+
+        public PullRequestDto(int number, String title, String body, String state, UserDto user, String htmlUrl,
+                String diffUrl, RefDto head, RefDto base, Boolean merged) {
+            this(number, title, body, state, user, htmlUrl, diffUrl, head, base, merged, null);
         }
     }
 
@@ -51,6 +58,12 @@ public class WebhookPayloadDto {
         private String name;
         private String fullName;
         private UserDto owner;
+        @JsonProperty("default_branch")
+        private String defaultBranch;
+
+        public RepositoryDto(Long id, String name, String fullName, UserDto owner) {
+            this(id, name, fullName, owner, null);
+        }
     }
 
     @Getter

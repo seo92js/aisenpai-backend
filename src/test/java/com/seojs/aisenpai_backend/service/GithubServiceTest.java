@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import com.seojs.aisenpai_backend.pullrequest.service.CodeGraphIndexService;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.util.UriBuilder;
@@ -71,6 +72,9 @@ class GithubServiceTest {
     @Mock
     private RepositoryCacheService repositoryCacheService;
 
+    @Mock
+    private CodeGraphIndexService codeGraphIndexService;
+
     private Executor githubApiExecutor = Runnable::run;
 
     private GithubService githubService;
@@ -97,7 +101,7 @@ class GithubServiceTest {
 
         githubService = new GithubService(webClientBuilder, githubAccountRepository, tokenEncryptionService,
                         pullRequestRepository, aiService, repositoryAiSettingsService, repositoryCacheService,
-                        githubApiExecutor);
+                        githubApiExecutor, codeGraphIndexService);
         ReflectionTestUtils.setField(githubService, "webhookUrl", "http://test.com/webhook");
     }
 

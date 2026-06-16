@@ -17,4 +17,15 @@ public class ChangedFileDto {
     private String rawUrl;          // 파일의 raw URL
     private String contentsUrl;     // 파일의 contents URL
     private String patch;           // 파일의 patch 내용 (diff)
+    @com.fasterxml.jackson.annotation.JsonProperty("previous_filename")
+    private String previousFilename; // 이전 파일명 (renamed 상태인 경우)
+
+    public ChangedFileDto(String filename, String status, int additions, int deletions, int changes, int lines,
+            String sha, String blobUrl, String rawUrl, String contentsUrl, String patch) {
+        this(filename, status, additions, deletions, changes, lines, sha, blobUrl, rawUrl, contentsUrl, patch, null);
+    }
+
+    @lombok.Builder
+    @lombok.experimental.Tolerate
+    public ChangedFileDto() {}
 }

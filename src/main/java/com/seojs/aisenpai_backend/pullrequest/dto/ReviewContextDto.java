@@ -42,6 +42,7 @@ public class ReviewContextDto {
         private ContentFetchStatus contentFetchStatus;
         private String contentSkipReason;
         private boolean truncated;
+        private String previousFilename;
 
         public static ChangedFileContextDto fromChangedFile(ChangedFileDto file, String patch, boolean patchTruncated,
                 String headContent, ContentFetchStatus contentFetchStatus, String contentSkipReason,
@@ -59,6 +60,7 @@ public class ReviewContextDto {
                     .contentFetchStatus(contentFetchStatus)
                     .contentSkipReason(contentSkipReason)
                     .truncated(truncated)
+                    .previousFilename(file.getPreviousFilename())
                     .build();
         }
     }

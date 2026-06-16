@@ -62,6 +62,7 @@ public class PullRequestService {
     private final ReviewFindingValidationService reviewFindingValidationService;
     private final RepositoryAiSettingsService repositoryAiSettingsService;
     private final RepositoryCacheService repositoryCacheService;
+    private final CodeGraphIndexService codeGraphIndexService;
 
     private record ReviewProcessingResult(
             String accessToken,
@@ -209,7 +210,7 @@ public class PullRequestService {
                     prNumber, e.getMessage());
         }
 
-        ReviewContextDto reviewContext = reviewContextService.buildReviewContext(accessToken, owner, repo, prNumber,
+        ReviewContextDto reviewContext = reviewContextService.buildReviewContext(repositoryId, accessToken, owner, repo, prNumber,
                 prInfo, filteredFiles, treeDto, ignorePatterns);
         ReviewContextDto.BudgetDto budget = reviewContext.getBudget();
         log.info("Review request context prepared. repositoryId={}, pr={}, model={}, detailLevel={}, changedFiles={}, "
@@ -645,6 +646,17 @@ public class PullRequestService {
 
         repositoryAiSettingsService.getOrCreatePlaceholder(repoId, owner, repoName);
         repositoryCacheService.evictAllAfterCommit();
+
+        if (prState == PullRequestState.MERGED && webhookPayload.getPullRequest() != null) {
+            String baseRef = webhookPayload.getPullRequest().getBase() != null ? webhookPayload.getPullRequest().getBase().getRef() : null;
+            String defaultBranchName = webhookPayload.getRepository() != null ? webhookPayload.getRepository().getDefaultBranch() : null;
+            if (baseRef != null && baseRef.equals(defaultBranchName)) {
+                String mergeCommitSha = webhookPayload.getPullRequest().getMergeCommitSha();
+                if (mergeCommitSha != null) {
+                    codeGraphIndexService.submitIndexingTask(repoId, "refs/heads/" + defaultBranchName, mergeCommitSha, true);
+                }
+            }
+        }
     }
 
     /**
