@@ -128,22 +128,30 @@ public class CodeGraphIndexService {
             return;
         }
 
-        RepositoryAiSettings settings = repositoryAiSettingsService.getRequired(repositoryId);
-        GithubAccount account = settings.getPostingAccount();
-        if (account == null) {
-            account = settings.getWebhookRegisteredBy();
+        IndexingContext context = new TransactionTemplate(transactionManager).execute(status -> {
+            RepositoryAiSettings settings = repositoryAiSettingsService.getRequired(repositoryId);
+            GithubAccount account = settings.getPostingAccount();
+            if (account == null) {
+                account = settings.getWebhookRegisteredBy();
+            }
+            if (account == null) {
+                throw new IllegalStateException("No GithubAccount configured for repository: " + repositoryId);
+            }
+            String decryptedToken = tokenEncryptionService.decryptToken(account.getAccessToken());
+            return new IndexingContext(settings.getOwner(), settings.getRepositoryName(), decryptedToken);
+        });
+
+        if (context == null) {
+            throw new IllegalStateException("Failed to load repository settings or account information");
         }
-        if (account == null) {
-            throw new IllegalStateException("No GithubAccount configured for repository: " + repositoryId);
-        }
-        String accessToken = tokenEncryptionService.decryptToken(account.getAccessToken());
+
+        String accessToken = context.accessToken;
+        String owner = context.owner;
+        String repo = context.repo;
 
         HttpClient client = HttpClient.newBuilder()
                 .followRedirects(HttpClient.Redirect.NORMAL)
                 .build();
-
-        String owner = settings.getOwner();
-        String repo = settings.getRepositoryName();
         HttpRequest request = HttpRequest.newBuilder()
                 .uri(URI.create("https://api.github.com/repos/" + owner + "/" + repo + "/zipball/" + commitSha))
                 .header("Authorization", "Bearer " + accessToken)
@@ -555,5 +563,17 @@ public class CodeGraphIndexService {
             }
             return null;
         });
+    }
+
+    private static class IndexingContext {
+        final String owner;
+        final String repo;
+        final String accessToken;
+
+        IndexingContext(String owner, String repo, String accessToken) {
+            this.owner = owner;
+            this.repo = repo;
+            this.accessToken = accessToken;
+        }
     }
 }
