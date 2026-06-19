@@ -1,6 +1,6 @@
 package com.seojs.aisenpai_backend.pullrequest.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import tools.jackson.core.JacksonException;
 import org.springframework.ai.retry.NonTransientAiException;
 import org.springframework.http.HttpStatusCode;
 import org.springframework.web.client.ResourceAccessException;
@@ -14,7 +14,7 @@ final class ReviewFailureClassifier {
     }
 
     static String messageFor(Throwable throwable) {
-        if (throwable instanceof JsonProcessingException) {
+        if (throwable instanceof JacksonException) {
             return "AI review failed: AI 요청 데이터를 생성하지 못했습니다.";
         }
         if (isInvalidApiConfiguration(throwable)) {
@@ -33,7 +33,7 @@ final class ReviewFailureClassifier {
     }
 
     static String codeFor(Throwable throwable) {
-        if (throwable instanceof JsonProcessingException) {
+        if (throwable instanceof JacksonException) {
             return "JSON_PAYLOAD_ERROR";
         }
         if (isInvalidApiConfiguration(throwable)) {

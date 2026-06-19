@@ -1,14 +1,18 @@
 package com.seojs.aisenpai_backend.pullrequest.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
+import com.seojs.aisenpai_backend.ai.advisor.CriticFilterAdvisor;
 import com.seojs.aisenpai_backend.ai.service.AiService;
+import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.ReviewStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -42,6 +46,9 @@ public class PullRequestReviewListener {
     private final ObjectMapper objectMapper;
     private final PullRequestService pullRequestService;
     private final TokenEncryptionService tokenEncryptionService;
+    private final GithubService githubService;
+
+    public record FilePathRequest(String path) {}
 
     @Async
     @EventListener
@@ -56,6 +63,13 @@ public class PullRequestReviewListener {
 
         try {
             String openApiKey = tokenEncryptionService.decryptToken(encryptedKey);
+            
+            // Webhook Payload 구성 (Repository Ai Settings에서 posting account 또는 pr.githubAccount를 가져오기 위한 owner, repo 획득)
+            String owner = dto.getReviewContext() != null && dto.getReviewContext().getPullRequest() != null 
+                    ? dto.getReviewContext().getPullRequest().getOwner() : null;
+            String repo = dto.getReviewContext() != null && dto.getReviewContext().getPullRequest() != null 
+                    ? dto.getReviewContext().getPullRequest().getRepo() : null;
+
             Map<String, Object> aiPayload = new HashMap<>();
             if (dto.getReviewContext() != null) {
                 aiPayload.put("reviewContext", dto.getReviewContext());
@@ -67,25 +81,34 @@ public class PullRequestReviewListener {
             }
 
             String userPrompt = objectMapper.writeValueAsString(aiPayload);
-            String review = aiService.callAiChat(openApiKey, systemPrompt, userPrompt, model, null);
 
-            // 2차 필터
-            String filteredReview = review;
-            try {
-                log.info("Running 2nd step Critic filter using gpt-4o-mini for PR #{}", prNumber);
-                String criticOutput = aiService.callAiChat(openApiKey, CRITIC_SYSTEM_PROMPT, review, "gpt-4o-mini", 0.1);
-                if (criticOutput != null && !criticOutput.isBlank()) {
-                    String sanitizedCritic = sanitizeAiReview(criticOutput);
-                    // JSON 유효성 검증
-                    objectMapper.readTree(sanitizedCritic);
-                    filteredReview = sanitizedCritic;
-                    log.info("2nd step Critic filter completed successfully for PR #{}", prNumber);
+            // fetchFileContent 도구 동적 정의
+            ToolCallback fetchFileContentTool = FunctionToolCallback.builder("fetchFileContent", (FilePathRequest req) -> {
+                try {
+                    log.info("AI dynamically requested file content for path: {}", req.path());
+                    return githubService.getFileContent(openApiKey, owner, repo, req.path(), dto.getReviewStartedHeadSha());
+                } catch (Exception e) {
+                    log.error("Failed to fetch file content in tool for path: {}", req.path(), e);
+                    return "Error fetching file: " + e.getMessage();
                 }
-            } catch (Exception e) {
-                log.warn("Failed to execute or parse 2nd step Critic filter. Falling back to original review. Error: {}", e.getMessage());
-            }
+            })
+            .description("PR 리뷰 진행 중 특정 파일의 전체 소스코드를 읽어옵니다. 추가 정보나 의존성 분석이 필요할 때만 선별적으로 호출하세요.")
+            .inputType(FilePathRequest.class)
+            .build();
 
-            pullRequestService.updateAiReview(repositoryId, prNumber, filteredReview, ReviewStatus.COMPLETED,
+            // 2차 Critic 필터 Advisor 정의
+            CriticFilterAdvisor criticFilterAdvisor = new CriticFilterAdvisor(
+                    aiService, openApiKey, CRITIC_SYSTEM_PROMPT, objectMapper
+            );
+
+            // 3. AI 호출 체인 구동 (Function Calling과 Advisor가 포함된 단일 호출)
+            AiReviewResponseDto filteredReviewDto = aiService.callAiChatWithStructuredOutput(
+                    openApiKey, systemPrompt, userPrompt, model, null, AiReviewResponseDto.class,
+                    List.of(criticFilterAdvisor), List.of(fetchFileContentTool)
+            );
+
+            String filteredReviewJson = objectMapper.writeValueAsString(filteredReviewDto);
+            pullRequestService.updateAiReview(repositoryId, prNumber, filteredReviewJson, ReviewStatus.COMPLETED,
                     dto.getReviewStartedHeadSha(), dto.getReviewRunId(), dto.getReviewContext());
         } catch (Exception e) {
             String failureCode = ReviewFailureClassifier.codeFor(e);
@@ -94,20 +117,5 @@ public class PullRequestReviewListener {
             pullRequestService.updateAiReview(repositoryId, prNumber, failureMessage, ReviewStatus.FAILED,
                     dto.getReviewStartedHeadSha(), dto.getReviewRunId());
         }
-    }
-
-
-
-    private String sanitizeAiReview(String aiReview) {
-        String sanitized = aiReview.trim();
-        if (sanitized.startsWith("```json")) {
-            sanitized = sanitized.substring(7);
-        } else if (sanitized.startsWith("```")) {
-            sanitized = sanitized.substring(3);
-        }
-        if (sanitized.endsWith("```")) {
-            sanitized = sanitized.substring(0, sanitized.length() - 3);
-        }
-        return sanitized.trim();
     }
 }

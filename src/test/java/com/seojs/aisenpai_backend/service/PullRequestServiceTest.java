@@ -1,6 +1,6 @@
 package com.seojs.aisenpai_backend.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import org.springframework.context.ApplicationEventPublisher;
 import com.seojs.aisenpai_backend.github.dto.WebhookPayloadDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;

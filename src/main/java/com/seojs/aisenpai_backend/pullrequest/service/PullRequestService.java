@@ -4,7 +4,7 @@ package com.seojs.aisenpai_backend.pullrequest.service;
 import com.seojs.aisenpai_backend.exception.OpenAiKeyNotSetEx;
 import com.seojs.aisenpai_backend.exception.PullRequestNotFoundEx;
 import com.seojs.aisenpai_backend.exception.WebhookProcessingEx;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
 import com.seojs.aisenpai_backend.github.dto.GitTreeResponseDto;
