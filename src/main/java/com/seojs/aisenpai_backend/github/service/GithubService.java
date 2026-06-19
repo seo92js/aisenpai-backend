@@ -22,6 +22,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.client.WebClientResponseException;
 
 import java.nio.charset.StandardCharsets;
+import tools.jackson.databind.JsonNode;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Base64;
@@ -333,6 +334,31 @@ public class GithubService {
         } catch (Exception e) {
             log.error("Failed to fetch repository tree for {}/{} at {}: {}", owner, repo, treeSha, e.getMessage());
             throw new GitHubApiEx("Failed to fetch repository tree", e);
+        }
+    }
+
+    /**
+     * GitHub Code Search API를 사용하여 저장소 내부의 코드를 검색합니다.
+     */
+    public JsonNode searchCode(String accessToken, String owner, String repo, String query) {
+        try {
+            String q = query + " repo:" + owner + "/" + repo;
+            return webClientBuilder.build()
+                    .get()
+                    .uri(uriBuilder -> uriBuilder
+                            .scheme("https")
+                            .host("api.github.com")
+                            .path("/search/code")
+                            .queryParam("q", q)
+                            .build())
+                    .header("Authorization", "Bearer " + accessToken)
+                    .header("Accept", "application/vnd.github.v3+json")
+                    .retrieve()
+                    .bodyToMono(JsonNode.class)
+                    .block();
+        } catch (Exception e) {
+            log.error("Failed to search code in {}/{} for query '{}': {}", owner, repo, query, e.getMessage());
+            throw new GitHubApiEx("Failed to search code", e);
         }
     }
 

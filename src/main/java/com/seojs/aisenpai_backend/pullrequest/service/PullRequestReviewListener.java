@@ -11,12 +11,18 @@ import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest.ReviewStatus;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import lombok.Getter;
+import lombok.Setter;
+import lombok.NoArgsConstructor;
+import lombok.AllArgsConstructor;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import tools.jackson.databind.JsonNode;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -48,7 +54,21 @@ public class PullRequestReviewListener {
     private final TokenEncryptionService tokenEncryptionService;
     private final GithubService githubService;
 
-    public record FilePathRequest(String path) {}
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class FilePathRequest {
+        private String path;
+    }
+
+    @Getter
+    @Setter
+    @NoArgsConstructor
+    @AllArgsConstructor
+    public static class CodeSearchRequest {
+        private String query;
+    }
 
     @Async
     @EventListener
@@ -82,13 +102,13 @@ public class PullRequestReviewListener {
 
             String userPrompt = objectMapper.writeValueAsString(aiPayload);
 
-            // fetchFileContent 도구 동적 정의
+            // 1. fetchFileContent 도구 동적 정의
             ToolCallback fetchFileContentTool = FunctionToolCallback.builder("fetchFileContent", (FilePathRequest req) -> {
                 try {
-                    log.info("AI dynamically requested file content for path: {}", req.path());
-                    return githubService.getFileContent(openApiKey, owner, repo, req.path(), dto.getReviewStartedHeadSha());
+                    log.info("AI dynamically requested file content for path: {}", req.getPath());
+                    return githubService.getFileContent(openApiKey, owner, repo, req.getPath(), dto.getReviewStartedHeadSha());
                 } catch (Exception e) {
-                    log.error("Failed to fetch file content in tool for path: {}", req.path(), e);
+                    log.error("Failed to fetch file content in tool for path: {}", req.getPath(), e);
                     return "Error fetching file: " + e.getMessage();
                 }
             })
@@ -96,15 +116,91 @@ public class PullRequestReviewListener {
             .inputType(FilePathRequest.class)
             .build();
 
-            // 2차 Critic 필터 Advisor 정의
+            // 2. searchCode 도구 동적 정의
+            ToolCallback searchCodeTool = FunctionToolCallback.builder("searchCode", (CodeSearchRequest req) -> {
+                try {
+                    log.info("AI dynamically requested code search for query: {}", req.getQuery());
+                    return githubService.searchCode(openApiKey, owner, repo, req.getQuery());
+                } catch (Exception e) {
+                    log.error("Failed to search code in tool for query: {}", req.getQuery(), e);
+                    return "Error searching code: " + e.getMessage();
+                }
+            })
+            .description("프로젝트 전체 소스코드에서 특정 키워드, 클래스명, 함수명 등을 검색합니다.")
+            .inputType(CodeSearchRequest.class)
+            .build();
+
+            // 3. listDirectory 도구 동적 정의
+            ToolCallback listDirectoryTool = FunctionToolCallback.builder("listDirectory", (FilePathRequest req) -> {
+                try {
+                    log.info("AI dynamically requested directory list for path: {}", req.getPath());
+                    var treeDto = githubService.getRepositoryTree(openApiKey, owner, repo, dto.getReviewStartedHeadSha(), true);
+                    if (treeDto == null || treeDto.getTree() == null) {
+                        return "Directory empty or tree not found.";
+                    }
+                    String targetDir = req.getPath().trim();
+                    if (!targetDir.endsWith("/") && !targetDir.isEmpty()) {
+                        targetDir += "/";
+                    }
+                    final String finalTargetDir = targetDir;
+                    List<String> items = new ArrayList<>();
+                    for (var item : treeDto.getTree()) {
+                        String itemPath = item.getPath();
+                        if (finalTargetDir.isEmpty()) {
+                            if (!itemPath.contains("/")) {
+                                items.add(item.getType() + ": " + itemPath);
+                            }
+                        } else if (itemPath.startsWith(finalTargetDir)) {
+                            String relativePath = itemPath.substring(finalTargetDir.length());
+                            if (!relativePath.isEmpty() && !relativePath.contains("/")) {
+                                items.add(item.getType() + ": " + relativePath);
+                            }
+                        }
+                    }
+                    if (items.isEmpty()) {
+                        return "No items found in directory: " + req.getPath();
+                    }
+                    return String.join("\n", items);
+                } catch (Exception e) {
+                    log.error("Failed to list directory in tool for path: {}", req.getPath(), e);
+                    return "Error listing directory: " + e.getMessage();
+                }
+            })
+            .description("특정 디렉토리 경로(예: 'src/main/java')를 입력받아 그 아래에 있는 하위 디렉토리 및 파일 목록을 보여줍니다. 루트는 빈 값('') 혹은 '/'를 사용하세요.")
+            .inputType(FilePathRequest.class)
+            .build();
+
+            // 4. fetchFilePatch 도구 동적 정의
+            ToolCallback fetchFilePatchTool = FunctionToolCallback.builder("fetchFilePatch", (FilePathRequest req) -> {
+                try {
+                    log.info("AI dynamically requested file patch/diff for path: {}", req.getPath());
+                    if (changedFiles == null) {
+                        return "No changed files available.";
+                    }
+                    return changedFiles.stream()
+                            .filter(file -> file.getFilename().equals(req.getPath()))
+                            .map(ChangedFileDto::getPatch)
+                            .findFirst()
+                            .orElse("File not found or no diff (patch) available for path: " + req.getPath());
+                } catch (Exception e) {
+                    log.error("Failed to fetch file patch in tool for path: {}", req.getPath(), e);
+                    return "Error fetching file patch: " + e.getMessage();
+                }
+            })
+            .description("프롬프트 크기 한계로 인해 일부 또는 전부가 잘렸던(truncated) 특정 파일의 원본 Diff(Patch) 전체 내용을 가져옵니다.")
+            .inputType(FilePathRequest.class)
+            .build();
+
+            // 5. 2차 Critic 필터 Advisor 정의
             CriticFilterAdvisor criticFilterAdvisor = new CriticFilterAdvisor(
                     aiService, openApiKey, CRITIC_SYSTEM_PROMPT, objectMapper
             );
 
-            // 3. AI 호출 체인 구동 (Function Calling과 Advisor가 포함된 단일 호출)
+            // 6. AI 호출 체인 구동 (Function Calling과 Advisor가 포함된 단일 호출)
             AiReviewResponseDto filteredReviewDto = aiService.callAiChatWithStructuredOutput(
                     openApiKey, systemPrompt, userPrompt, model, null, AiReviewResponseDto.class,
-                    List.of(criticFilterAdvisor), List.of(fetchFileContentTool)
+                    List.of(criticFilterAdvisor),
+                    List.of(fetchFileContentTool, searchCodeTool, listDirectoryTool, fetchFilePatchTool)
             );
 
             String filteredReviewJson = objectMapper.writeValueAsString(filteredReviewDto);
