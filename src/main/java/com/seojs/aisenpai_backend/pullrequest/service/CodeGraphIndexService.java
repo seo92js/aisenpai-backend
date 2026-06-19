@@ -73,6 +73,10 @@ public class CodeGraphIndexService {
     static final Pattern JS_IMPORT_PATTERN_1 = Pattern.compile("import\\s+(?s:.*?)\\s+from\\s+['\"]([^'\"]+)['\"]");
     static final Pattern JS_IMPORT_PATTERN_2 = Pattern.compile("import\\s+['\"]([^'\"]+)['\"]");
     static final Pattern JS_REQUIRE_PATTERN = Pattern.compile("require\\s*\\(\\s*['\"]([^'\"]+)\\s*['\"]\\)");
+    static final Pattern PY_IMPORT_PATTERN_1 = Pattern.compile("(?m)^[ \t]*import\\s+([a-zA-Z0-9_., \t]+)");
+    static final Pattern PY_IMPORT_PATTERN_2 = Pattern.compile("(?m)^[ \t]*from\\s+([a-zA-Z0-9_.]+)\\s+import\\s+([a-zA-Z0-9_*, \t]+)");
+    static final Pattern KT_IMPORT_PATTERN = Pattern.compile("import\\s+([a-zA-Z0-9._*]+)(?:\\s+as\\s+[a-zA-Z0-9_]+)?;?");
+    static final Pattern CPP_INCLUDE_PATTERN = Pattern.compile("#include\\s*[\"<]([^\">]+)[\">]");
 
     @PreDestroy
     public void shutdown() {
@@ -300,6 +304,8 @@ public class CodeGraphIndexService {
         if (path == null) return false;
         String lower = path.toLowerCase();
         return lower.endsWith(".java") ||
+                lower.endsWith(".kt") ||
+                lower.endsWith(".kts") ||
                 lower.endsWith(".js") ||
                 lower.endsWith(".ts") ||
                 lower.endsWith(".jsx") ||
@@ -311,6 +317,8 @@ public class CodeGraphIndexService {
                 lower.endsWith(".cpp") ||
                 lower.endsWith(".h") ||
                 lower.endsWith(".hpp") ||
+                lower.endsWith(".cc") ||
+                lower.endsWith(".cxx") ||
                 lower.endsWith(".cs") ||
                 lower.endsWith(".rb") ||
                 lower.endsWith(".php") ||
@@ -335,6 +343,15 @@ public class CodeGraphIndexService {
                     rawImports.add(imp);
                 }
             }
+        } else if (List.of("kt", "kts").contains(extension)) {
+            String stripped = stripCommentsJava(content);
+            Matcher matcher = KT_IMPORT_PATTERN.matcher(stripped);
+            while (matcher.find()) {
+                String imp = matcher.group(1);
+                if (imp != null && !imp.isBlank()) {
+                    rawImports.add(imp);
+                }
+            }
         } else if (List.of("js", "ts", "jsx", "tsx").contains(extension)) {
             String stripped = stripCommentsJava(content);
             Matcher matcher = JS_IMPORT_PATTERN_1.matcher(stripped);
@@ -352,6 +369,32 @@ public class CodeGraphIndexService {
                 }
             }
             matcher = JS_REQUIRE_PATTERN.matcher(stripped);
+            while (matcher.find()) {
+                String imp = matcher.group(1);
+                if (imp != null && !imp.isBlank()) {
+                    rawImports.add(imp);
+                }
+            }
+        } else if ("py".equals(extension)) {
+            String stripped = stripCommentsPython(content);
+            Matcher matcher = PY_IMPORT_PATTERN_1.matcher(stripped);
+            while (matcher.find()) {
+                String imp = matcher.group(1);
+                if (imp != null && !imp.isBlank()) {
+                    rawImports.add("import " + imp.trim());
+                }
+            }
+            matcher = PY_IMPORT_PATTERN_2.matcher(stripped);
+            while (matcher.find()) {
+                String pkg = matcher.group(1);
+                String names = matcher.group(2);
+                if (pkg != null && !pkg.isBlank()) {
+                    rawImports.add("from " + pkg.trim() + " import " + names.trim());
+                }
+            }
+        } else if (List.of("cpp", "h", "hpp", "cc", "cxx", "c").contains(extension)) {
+            String stripped = stripCommentsJava(content);
+            Matcher matcher = CPP_INCLUDE_PATTERN.matcher(stripped);
             while (matcher.find()) {
                 String imp = matcher.group(1);
                 if (imp != null && !imp.isBlank()) {
@@ -422,12 +465,150 @@ public class CodeGraphIndexService {
         return sb.toString();
     }
 
+    public static String stripCommentsPython(String content) {
+        if (content == null) return "";
+        StringBuilder sb = new StringBuilder();
+        boolean inSingleLineComment = false;
+        boolean inString = false;
+        char stringChar = 0;
+
+        int len = content.length();
+        for (int i = 0; i < len; i++) {
+            char c = content.charAt(i);
+            if (inSingleLineComment) {
+                if (c == '\n' || c == '\r') {
+                    inSingleLineComment = false;
+                    sb.append(c);
+                }
+            } else if (inString) {
+                sb.append(c);
+                if (c == '\\') {
+                    if (i + 1 < len) {
+                        sb.append(content.charAt(i + 1));
+                        i++;
+                    }
+                } else if (c == stringChar) {
+                    inString = false;
+                }
+            } else {
+                if (c == '#') {
+                    inSingleLineComment = true;
+                } else {
+                    sb.append(c);
+                    if (c == '"' || c == '\'' || c == '`') {
+                        inString = true;
+                        stringChar = c;
+                    }
+                }
+            }
+        }
+        return sb.toString();
+    }
+
+    static List<String> resolvePythonImport(String sourceFile, String rawImport, Set<String> allFiles) {
+        List<String> resolved = new ArrayList<>();
+        if (rawImport.startsWith("import ")) {
+            String modulesPart = rawImport.substring(7);
+            String[] modules = modulesPart.split(",");
+            for (String mod : modules) {
+                String cleanMod = mod.trim().split("\\s+as\\s+")[0].trim();
+                String targetPath1 = cleanMod.replace('.', '/') + ".py";
+                String targetPath2 = cleanMod.replace('.', '/') + "/__init__.py";
+                for (String file : allFiles) {
+                    if (file.endsWith(targetPath1) || file.endsWith(targetPath2)) {
+                        resolved.add(file);
+                    }
+                }
+            }
+        } else if (rawImport.startsWith("from ")) {
+            int importIdx = rawImport.indexOf(" import ");
+            if (importIdx != -1) {
+                String pkg = rawImport.substring(5, importIdx).trim();
+                String namesPart = rawImport.substring(importIdx + 8).trim();
+                String[] names = namesPart.split(",");
+                for (String name : names) {
+                    String cleanName = name.trim().split("\\s+as\\s+")[0].trim();
+                    if ("*".equals(cleanName)) {
+                        String targetPath1 = pkg.replace('.', '/') + ".py";
+                        String targetPath2 = pkg.replace('.', '/') + "/__init__.py";
+                        for (String file : allFiles) {
+                            if (file.endsWith(targetPath1) || file.endsWith(targetPath2)) {
+                                resolved.add(file);
+                            }
+                        }
+                    } else {
+                        String targetPath1 = pkg.replace('.', '/') + ".py";
+                        String targetPath2 = pkg.replace('.', '/') + "/__init__.py";
+                        String targetPath3 = (pkg + "." + cleanName).replace('.', '/') + ".py";
+                        String targetPath4 = (pkg + "." + cleanName).replace('.', '/') + "/__init__.py";
+                        for (String file : allFiles) {
+                            if (file.endsWith(targetPath1) || file.endsWith(targetPath2) ||
+                                    file.endsWith(targetPath3) || file.endsWith(targetPath4)) {
+                                resolved.add(file);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return resolved;
+    }
+
+    static List<String> resolveKotlinImport(String importStr, Set<String> allFiles) {
+        List<String> resolved = new ArrayList<>();
+        if (importStr.endsWith(".*")) {
+            String packagePath = importStr.substring(0, importStr.length() - 2).replace('.', '/');
+            for (String file : allFiles) {
+                if ((file.endsWith(".kt") || file.endsWith(".kts")) && file.contains("/" + packagePath + "/")) {
+                    resolved.add(file);
+                }
+            }
+        } else {
+            String filePathSuffix = importStr.replace('.', '/');
+            for (String file : allFiles) {
+                if (file.endsWith(".kt") || file.endsWith(".kts")) {
+                    String fileWithoutExt = file.substring(0, file.lastIndexOf('.'));
+                    if (fileWithoutExt.endsWith(filePathSuffix)) {
+                        resolved.add(file);
+                    }
+                }
+            }
+        }
+        return resolved;
+    }
+
+    static List<String> resolveCppImport(String sourceFile, String rawImport, Set<String> allFiles) {
+        List<String> resolved = new ArrayList<>();
+        String relativeCandidate = normalizeRelativePath(directoryOf(sourceFile), rawImport);
+        if (allFiles.contains(relativeCandidate)) {
+            resolved.add(relativeCandidate);
+            return resolved;
+        }
+        if (allFiles.contains(rawImport)) {
+            resolved.add(rawImport);
+            return resolved;
+        }
+        String suffix = rawImport.startsWith("/") ? rawImport : "/" + rawImport;
+        for (String file : allFiles) {
+            if (file.endsWith(suffix) || file.equals(rawImport)) {
+                resolved.add(file);
+            }
+        }
+        return resolved;
+    }
+
     static List<String> resolveImport(String sourceFile, String rawImport, Set<String> allFiles) {
         String extension = getExtension(sourceFile);
         if ("java".equals(extension)) {
             return resolveJavaImport(rawImport, allFiles);
+        } else if (List.of("kt", "kts").contains(extension)) {
+            return resolveKotlinImport(rawImport, allFiles);
         } else if (List.of("js", "ts", "jsx", "tsx").contains(extension)) {
             return resolveJsTsImport(sourceFile, rawImport, allFiles);
+        } else if ("py".equals(extension)) {
+            return resolvePythonImport(sourceFile, rawImport, allFiles);
+        } else if (List.of("cpp", "h", "hpp", "cc", "cxx", "c").contains(extension)) {
+            return resolveCppImport(sourceFile, rawImport, allFiles);
         }
         return List.of();
     }
