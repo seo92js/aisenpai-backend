@@ -1,9 +1,13 @@
 package com.seojs.aisenpai_backend.pullrequest.service;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.seojs.aisenpai_backend.ai.service.AiService;
+import com.seojs.aisenpai_backend.github.dto.AiReviewResponseDto;
 import com.seojs.aisenpai_backend.github.dto.ChangedFileDto;
+import com.seojs.aisenpai_backend.github.dto.ReviewCommentDto;
+import com.seojs.aisenpai_backend.github.service.GithubService;
 import com.seojs.aisenpai_backend.github.service.TokenEncryptionService;
+import com.seojs.aisenpai_backend.ai.advisor.CriticFilterAdvisor;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewContextDto;
 import com.seojs.aisenpai_backend.pullrequest.dto.ReviewRequestDto;
 import com.seojs.aisenpai_backend.pullrequest.entity.PullRequest;
@@ -31,17 +35,22 @@ class PullRequestReviewListenerTest {
     @Mock
     private TokenEncryptionService tokenEncryptionService;
 
+    @Mock
+    private GithubService githubService;
+
     private PullRequestReviewListener listener;
+    private ObjectMapper objectMapper;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
-        listener = new PullRequestReviewListener(aiService, new ObjectMapper(), pullRequestService,
-                tokenEncryptionService);
+        objectMapper = new ObjectMapper();
+        listener = new PullRequestReviewListener(aiService, objectMapper, pullRequestService,
+                tokenEncryptionService, githubService);
     }
 
     @Test
-    void handleReviewRequested_IncludesReviewContextInAiPayload() {
+    void handleReviewRequested_IncludesReviewContextInAiPayload() throws Exception {
         // given
         ChangedFileDto changedFile = new ChangedFileDto(
                 "src/App.ts", "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents", "@@ -1 +1 @@\n+a");
@@ -58,47 +67,61 @@ class PullRequestReviewListenerTest {
         ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(changedFile), "gpt-4o-mini",
                 "system", "encrypted-key", "tree", "head", "run-1", reviewContext);
 
+        AiReviewResponseDto emptyReview = AiReviewResponseDto.builder()
+                .generalReview("Review")
+                .comments(List.of())
+                .contextFiles(List.of())
+                .build();
+
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
-        when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
-                .thenReturn("{}");
-        when(aiService.callAiChat(eq("openai-key"), contains("Critic"), anyString(), eq("gpt-4o-mini"), eq(0.1)))
-                .thenReturn(null);
+        when(aiService.callAiChatWithStructuredOutput(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull(), eq(AiReviewResponseDto.class), anyList(), anyList()))
+                .thenReturn(emptyReview);
 
         // when
         listener.handleReviewRequested(request);
 
         // then
         ArgumentCaptor<String> promptCaptor = ArgumentCaptor.forClass(String.class);
-        verify(aiService).callAiChat(eq("openai-key"), eq("system"), promptCaptor.capture(), eq("gpt-4o-mini"),
-                isNull());
+        verify(aiService).callAiChatWithStructuredOutput(eq("openai-key"), eq("system"), promptCaptor.capture(), eq("gpt-4o-mini"),
+                isNull(), eq(AiReviewResponseDto.class), anyList(), anyList());
         assertTrue(promptCaptor.getValue().contains("\"reviewContext\""));
         assertTrue(promptCaptor.getValue().contains("\"changedFiles\""));
         assertFalse(promptCaptor.getValue().contains("\"repositoryTree\":\"tree\""));
-        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq("{}"), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), eq(reviewContext));
+
+        String expectedJson = objectMapper.writeValueAsString(emptyReview);
+        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq(expectedJson), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), eq(reviewContext));
     }
 
     @Test
-    void handleReviewRequested_AppliesCriticFilterToCleanNoiseReviews() {
+    void handleReviewRequested_AppliesCriticFilterToCleanNoiseReviews() throws Exception {
         // given
         ChangedFileDto changedFile = new ChangedFileDto(
                 "src/App.ts", "modified", 1, 0, 1, 10, "sha", "blob", "raw", "contents", "@@ -1 +1 @@\n+a");
         ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(changedFile), "gpt-4o-mini",
                 "system", "encrypted-key", "tree", "head", "run-1", null);
 
-        String rawReview = "{\"comments\": [{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"This is a bug.\"},{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"단위 테스트를 추가하세요.\"}]}";
-        String filteredReview = "{\"comments\": [{\"path\":\"src/App.ts\",\"codeSnippet\":\"a\",\"body\":\"This is a bug.\"}]}";
+        AiReviewResponseDto rawReview = AiReviewResponseDto.builder()
+                .comments(List.of())
+                .build();
 
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
-        when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
+        when(aiService.callAiChatWithStructuredOutput(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull(), eq(AiReviewResponseDto.class), anyList(), anyList()))
                 .thenReturn(rawReview);
-        when(aiService.callAiChat(eq("openai-key"), contains("Critic"), eq(rawReview), eq("gpt-4o-mini"), eq(0.1)))
-                .thenReturn(filteredReview);
 
         // when
         listener.handleReviewRequested(request);
 
         // then
-        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq(filteredReview), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), isNull());
+        ArgumentCaptor<List> advisorsCaptor = ArgumentCaptor.forClass(List.class);
+        verify(aiService).callAiChatWithStructuredOutput(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"),
+                isNull(), eq(AiReviewResponseDto.class), advisorsCaptor.capture(), anyList());
+        
+        List advisors = advisorsCaptor.getValue();
+        assertFalse(advisors.isEmpty());
+        assertTrue(advisors.get(0) instanceof CriticFilterAdvisor);
+
+        String expectedJson = objectMapper.writeValueAsString(rawReview);
+        verify(pullRequestService).updateAiReview(eq(1L), eq(1), eq(expectedJson), eq(PullRequest.ReviewStatus.COMPLETED), eq("head"), eq("run-1"), isNull());
     }
 
     @Test
@@ -107,7 +130,7 @@ class PullRequestReviewListenerTest {
         ReviewRequestDto request = new ReviewRequestDto(1L, 1, List.of(), "gpt-4o-mini",
                 "system", "encrypted-key", "tree", "head", "run-1", null);
         when(tokenEncryptionService.decryptToken("encrypted-key")).thenReturn("openai-key");
-        when(aiService.callAiChat(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull()))
+        when(aiService.callAiChatWithStructuredOutput(eq("openai-key"), eq("system"), anyString(), eq("gpt-4o-mini"), isNull(), eq(AiReviewResponseDto.class), anyList(), anyList()))
                 .thenThrow(new ResourceAccessException("Read timed out"));
 
         // when

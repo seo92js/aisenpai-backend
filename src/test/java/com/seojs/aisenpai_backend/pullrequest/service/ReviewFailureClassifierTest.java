@@ -1,6 +1,6 @@
 package com.seojs.aisenpai_backend.pullrequest.service;
 
-import com.fasterxml.jackson.core.JsonParseException;
+import tools.jackson.core.JacksonException;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -16,7 +16,7 @@ class ReviewFailureClassifierTest {
     @Test
     void messageFor_ClassifiesJsonPayloadError() {
         // given
-        JsonParseException exception = new JsonParseException(null, "bad json");
+        JacksonException exception = new JacksonException("bad json") {};
 
         // when & then
         assertEquals("JSON_PAYLOAD_ERROR", ReviewFailureClassifier.codeFor(exception));
