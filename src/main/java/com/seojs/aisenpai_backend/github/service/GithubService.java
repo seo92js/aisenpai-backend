@@ -525,13 +525,23 @@ public class GithubService {
     }
 
     private GitHubApiEx handleGitHubException(String baseMessage, Exception e) {
-        String detailedMessage = baseMessage;
-        if (e instanceof WebClientResponseException wcre) {
-            detailedMessage += String.format(" (Status: %s, Body: %s)", 
-                    wcre.getStatusCode(), wcre.getResponseBodyAsString());
-        } else if (e.getMessage() != null) {
-            detailedMessage += " (" + e.getMessage() + ")";
+        StringBuilder sb = new StringBuilder(baseMessage);
+        if (e.getMessage() != null) {
+            sb.append(" (").append(e.getMessage()).append(")");
         }
-        return new GitHubApiEx(detailedMessage, e);
+        if (e instanceof WebClientResponseException wcre) {
+            String body = wcre.getResponseBodyAsString();
+            if (body != null && !body.isBlank()) {
+                sb.append(" [Status: ").append(wcre.getStatusCode())
+                  .append(", Body: ").append(body).append("]");
+            } else {
+                sb.append(" [Status: ").append(wcre.getStatusCode()).append("]");
+            }
+        }
+        Throwable cause = e.getCause();
+        if (cause != null && cause.getMessage() != null && !cause.getMessage().equals(e.getMessage())) {
+            sb.append(" [Cause: ").append(cause.getMessage()).append("]");
+        }
+        return new GitHubApiEx(sb.toString(), e);
     }
 }
