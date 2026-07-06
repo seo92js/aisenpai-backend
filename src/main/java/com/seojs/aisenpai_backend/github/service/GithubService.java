@@ -92,7 +92,7 @@ public class GithubService {
                     .bodyToMono(GitRepositoryResponseDto.class)
                     .block();
         } catch (Exception e) {
-            throw new GitHubApiEx("Failed to get repository: " + owner + "/" + repo, e);
+            throw handleGitHubException("Failed to get repository: " + owner + "/" + repo, e);
         }
     }
 
@@ -226,7 +226,7 @@ public class GithubService {
         } catch (GithubRateLimitEx e) {
             throw e;
         } catch (Exception e) {
-            throw new GitHubApiEx("Failed to get changed files", e);
+            throw handleGitHubException("Failed to get changed files", e);
         }
     }
 
@@ -245,7 +245,7 @@ public class GithubService {
                     .block();
         } catch (Exception e) {
             log.error("Failed to fetch PR info for {}/{} PR #{}", owner, repo, prNumber, e);
-            throw new GitHubApiEx("Failed to get PR info", e);
+            throw handleGitHubException("Failed to get PR info", e);
         }
     }
 
@@ -281,7 +281,7 @@ public class GithubService {
             return response.getContent();
         } catch (Exception e) {
             log.error("Failed to fetch file content for {}/{} {} at {}: {}", owner, repo, path, ref, e.getMessage());
-            throw new GitHubApiEx("Failed to get file content", e);
+            throw handleGitHubException("Failed to get file content", e);
         }
     }
 
@@ -307,7 +307,7 @@ public class GithubService {
             log.info("Posted review comment to PR #{} in {}/{}", prNumber, owner, repo);
         } catch (Exception e) {
             log.error("Failed to post comment to PR #{} in {}/{}: {}", prNumber, owner, repo, e.getMessage());
-            throw new GitHubApiEx("Failed to post PR comment", e);
+            throw handleGitHubException("Failed to post PR comment", e);
         }
     }
 
@@ -333,7 +333,7 @@ public class GithubService {
                     .block();
         } catch (Exception e) {
             log.error("Failed to fetch repository tree for {}/{} at {}: {}", owner, repo, treeSha, e.getMessage());
-            throw new GitHubApiEx("Failed to fetch repository tree", e);
+            throw handleGitHubException("Failed to fetch repository tree", e);
         }
     }
 
@@ -358,7 +358,7 @@ public class GithubService {
                     .block();
         } catch (Exception e) {
             log.error("Failed to search code in {}/{} for query '{}': {}", owner, repo, query, e.getMessage());
-            throw new GitHubApiEx("Failed to search code", e);
+            throw handleGitHubException("Failed to search code", e);
         }
     }
 
@@ -380,13 +380,9 @@ public class GithubService {
                     .block();
 
             log.info("Posted inline review to PR #{} in {}/{}", prNumber, owner, repo);
-        } catch (WebClientResponseException e) {
-            log.error("Failed to post inline review to PR #{} in {}/{}: {} - Body: {}", prNumber, owner, repo,
-                    e.getMessage(), e.getResponseBodyAsString());
-            throw new GitHubApiEx("Failed to post PR review", e);
         } catch (Exception e) {
             log.error("Failed to post inline review to PR #{} in {}/{}: {}", prNumber, owner, repo, e.getMessage());
-            throw new GitHubApiEx("Failed to post PR review", e);
+            throw handleGitHubException("Failed to post PR review", e);
         }
     }
 
@@ -524,7 +520,18 @@ public class GithubService {
                     .block();
             return commitInfo != null ? commitInfo.get("sha").toString() : null;
         } catch (Exception e) {
-            throw new com.seojs.aisenpai_backend.exception.GitHubApiEx("Failed to get latest commit SHA for branch: " + branch, e);
+            throw handleGitHubException("Failed to get latest commit SHA for branch: " + branch, e);
         }
+    }
+
+    private GitHubApiEx handleGitHubException(String baseMessage, Exception e) {
+        String detailedMessage = baseMessage;
+        if (e instanceof WebClientResponseException wcre) {
+            detailedMessage += String.format(" (Status: %s, Body: %s)", 
+                    wcre.getStatusCode(), wcre.getResponseBodyAsString());
+        } else if (e.getMessage() != null) {
+            detailedMessage += " (" + e.getMessage() + ")";
+        }
+        return new GitHubApiEx(detailedMessage, e);
     }
 }
