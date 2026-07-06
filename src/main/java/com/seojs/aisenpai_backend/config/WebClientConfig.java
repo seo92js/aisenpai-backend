@@ -12,6 +12,7 @@ public class WebClientConfig {
     @Bean
     public WebClient.Builder webClientBuilder() {
         return WebClient.builder()
+                .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024)) // 10MB
                 .filter((request, next) -> next.exchange(request)
                         .flatMap(response -> {
                             String remaining = response.headers().asHttpHeaders().getFirst("X-RateLimit-Remaining");
